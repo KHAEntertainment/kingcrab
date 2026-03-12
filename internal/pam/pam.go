@@ -1,0 +1,258 @@
+package pam
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// TokenStore defines the interface for storing biometric tokens
+type TokenStore interface {
+	Store(ctx context.Context, userID string, token Token) error
+	Retrieve(ctx context.Context, userID string) (*Token, error)
+	Delete(ctx context.Context, userID string) error
+}
+
+// Token represents an enrolled biometric token
+type Token struct {
+	Value           string    `json:"token"`
+	DeviceInfo      string    `json:"device_info"`
+	EnrolledAt      time.Time `json:"enrolled_at"`
+	LastUsedAt      time.Time `json:"last_used_at"`
+	TokenStorage    string    `json:"token_storage"` // "local" or "clawvault"
+}
+
+// PAMConfig holds PAM-specific configuration
+type PAMConfig struct {
+	// UseClawVault: auto | true | false
+	UseClawVault string `json:"use_clawvault"`
+
+	// ClawVault-specific settings
+	ClawVault ClawVaultConfig `json:"clawvault"`
+
+	// Fallback settings (when ClawVault unavailable)
+	Fallback FallbackConfig `json:"fallback"`
+}
+
+// ClawVaultConfig for ClawVault integration
+type ClawVaultConfig struct {
+	Socket       string `json:"socket"`        // Socket path
+	Host         string `json:"host"`          // Network endpoint
+	TokenPrefix  string `json:"token_prefix"` // Key prefix for tokens
+	TimeoutSec   int    `json:"timeout_seconds"`
+}
+
+// FallbackConfig for local encrypted storage
+type FallbackConfig struct {
+	EncryptionKeyEnv string `json:"encryption_key_env"` // Env var for key
+	StoragePath      string `json:"storage_path"`        // Where to store encrypted tokens
+	TTLMinutes       int    `json:"ttl_minutes"`
+	AuthorizedUsers  []User `json:"authorized_users"`
+}
+
+// User represents an authorized user
+type User struct {
+	TelegramID int64  `json:"telegram_id"`
+	Name       string `json:"name"`
+}
+
+// PAM represents the PAM subsystem
+type PAM struct {
+	store         TokenStore
+	config        *PAMConfig
+	clawvaultMode ClawVaultStatus
+	mu            sync.RWMutex
+}
+
+// ClawVaultStatus indicates ClawVault availability
+type ClawVaultStatus struct {
+	Available     bool
+	Mode          string // "socket", "network", "tailscale"
+	Endpoint      string
+	HasPAMSupport bool
+	Error         error
+}
+
+// NewPAM creates a new PAM instance
+func NewPAM(config *PAMConfig) (*PAM, error) {
+	if config == nil {
+		config = &PAMConfig{
+			UseClawVault: "auto",
+		}
+	}
+
+	pam := &PAM{
+		config: config,
+	}
+
+	// Detect and initialize token store
+	store, mode, err := pam.detectAndInitStore()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize token store: %w", err)
+	}
+
+	pam.store = store
+	pam.clawvaultMode = mode
+
+	return pam, nil
+}
+
+// detectAndInitStore determines which store to use
+func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
+	mode := p.detectClawVault()
+
+	// Check config override
+	if p.config.UseClawVault == "false" {
+		return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "disabled"}, nil
+	}
+
+	if p.config.UseClawVault == "true" && !mode.Available {
+		return nil, mode, errors.New("ClawVault required but not available")
+	}
+
+	if mode.Available {
+		// Use ClawVault store
+		store, err := NewClawVaultTokenStore(p.config.ClawVault.TokenPrefix, mode.Endpoint)
+		if err != nil {
+			return nil, mode, fmt.Errorf("ClawVault store init failed: %w", err)
+		}
+		return store, mode, nil
+	}
+
+	// Fallback to local
+	return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "fallback"}, nil
+}
+
+// newFallbackStore creates local encrypted storage
+func (p *PAM) newFallbackStore() TokenStore {
+	storagePath := p.config.Fallback.StoragePath
+	if storagePath == "" {
+		storagePath = filepath.Join(os.Getenv("HOME"), ".config", "kingcrab", "tokens")
+	}
+	return NewLocalEncryptedTokenStore(storagePath, p.config.Fallback.EncryptionKeyEnv)
+}
+
+// detectClawVault checks for ClawVault availability
+func (p *PAM) detectClawVault() ClawVaultStatus {
+	// Check socket paths
+	socketPaths := []string{
+		"/var/run/clawvault.sock",
+		filepath.Join(os.Getenv("HOME"), ".clawvault", "clawvault.sock"),
+	}
+
+	for _, path := range socketPaths {
+		if _, err := os.Stat(path); err == nil {
+			// Socket exists - try to connect
+			if p.testClawVaultConnection(path) {
+				return ClawVaultStatus{
+					Available: true,
+					Mode:      "socket",
+					Endpoint:  path,
+				}
+			}
+		}
+	}
+
+	// Check network endpoints
+	hosts := []string{
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:3001",
+	}
+
+	for _, host := range hosts {
+		if p.testClawVaultHTTP(host) {
+			return ClawVaultStatus{
+				Available: true,
+				Mode:      "network",
+				Endpoint:  host,
+			}
+		}
+	}
+
+	// Check Tailscale
+	if tsIP := os.Getenv("CLAWVAULT_TAILSCALE_IP"); tsIP != "" {
+		if p.testClawVaultHTTP("http://" + tsIP + ":3000") {
+			return ClawVaultStatus{
+				Available: true,
+				Mode:      "tailscale",
+				Endpoint:  "http://" + tsIP + ":3000",
+			}
+		}
+	}
+
+	return ClawVaultStatus{Available: false}
+}
+
+// testClawVaultConnection tests socket connection
+func (p *PAM) testClawVaultConnection(socketPath string) bool {
+	// Simplified - in production would actually connect and ping
+	// For now, return true if socket exists and config allows
+	return p.config.UseClawVault != "false"
+}
+
+// testClawVaultHTTP tests HTTP endpoint
+func (p *PAM) testClawVaultHTTP(endpoint string) bool {
+	// Simplified - in production would make HTTP request
+	return p.config.UseClawVault != "false"
+}
+
+// StoreToken stores a biometric token for a user
+func (p *PAM) StoreToken(ctx context.Context, userID string, token Token) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.store.Store(ctx, userID, token)
+}
+
+// RetrieveToken retrieves a user's biometric token
+func (p *PAM) RetrieveToken(ctx context.Context, userID string) (*Token, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.store.Retrieve(ctx, userID)
+}
+
+// DeleteToken removes a user's biometric token
+func (p *PAM) DeleteToken(ctx context.Context, userID string) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.store.Delete(ctx, userID)
+}
+
+// GetStatus returns PAM status info
+func (p *PAM) GetStatus() map[string]interface{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return map[string]interface{}{
+		"mode":            p.clawvaultMode.Mode,
+		"clawvault_found": p.clawvaultMode.Available,
+		"endpoint":        p.clawvaultMode.Endpoint,
+	}
+}
+
+// DefaultPAMConfig returns sensible defaults
+func DefaultPAMConfig() *PAMConfig {
+	return &PAMConfig{
+		UseClawVault: "auto",
+		ClawVault: ClawVaultConfig{
+			TokenPrefix: "kingcrab/pam/tokens",
+			TimeoutSec:  5,
+		},
+		Fallback: FallbackConfig{
+			TTLMinutes: 5,
+		},
+	}
+}
+
+// LoadPAMConfig loads PAM config from JSON
+func LoadPAMConfig(data []byte) (*PAMConfig, error) {
+	cfg := DefaultPAMConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}

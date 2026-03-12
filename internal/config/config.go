@@ -4,26 +4,41 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+
+	"github.com/KHAEntertainment/kingcrab/internal/pam"
 )
 
 // Config holds KingCrab configuration
 type Config struct {
-	Version           string   `json:"version"`
-	Listen            ListenConfig `json:"listen"`
-	AllowedCommands   []string `json:"allowedCommands"`
-	RequireReason     bool     `json:"requireReason"`
-	AutoApproveTimeout int     `json:"autoApproveTimeout"`
-	LogDir            string   `json:"logDir"`
-	DataDir           string   `json:"dataDir"`
-	Port              int      `json:"port"`
-	SocketPath        string   `json:"socketPath"`
-	LogLevel          string   `json:"logLevel"`
+	Version            string          `json:"version"`
+	Listen            ListenConfig    `json:"listen"`
+	AllowedCommands   []string        `json:"allowedCommands"`
+	RequireReason     bool            `json:"requireReason"`
+	AutoApproveTimeout int            `json:"autoApproveTimeout"`
+	LogDir            string          `json:"logDir"`
+	DataDir           string          `json:"dataDir"`
+	Port              int             `json:"port"`
+	SocketPath        string          `json:"socketPath"`
+	LogLevel          string          `json:"logLevel"`
+
+	// Telegram bot for approvals
+	Telegram          *TelegramConfig `json:"telegram"`
+
+	// PAM (Privileged Access Management) config
+	PAM               *pam.PAMConfig  `json:"pam"`
 }
 
 type ListenConfig struct {
 	Type string `json:"type"`
 	Path string `json:"path"`
 	Port int    `json:"port"`
+}
+
+// TelegramConfig for the approval bot
+type TelegramConfig struct {
+	BotToken      string  `json:"botToken"`
+	AllowedUsers  []int64 `json:"allowedUsers"`
+	WebhookURL    string  `json:"webhookUrl"`
 }
 
 // DefaultConfig returns sensible defaults
@@ -49,6 +64,10 @@ func DefaultConfig() *Config {
 		Port:              8080,
 		SocketPath:        "/var/run/kingcrab.sock",
 		LogLevel:          "info",
+		Telegram: &TelegramConfig{
+			AllowedUsers: []int64{}, // Empty = no restrictions (but require enrollment)
+		},
+		PAM: pam.DefaultPAMConfig(),
 	}
 }
 

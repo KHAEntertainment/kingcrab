@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KingCrab PAM Approval</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --tg-theme-bg-color: #ffffff;
+            --tg-theme-text-color: #000000;
+            --tg-theme-button-color: #2481cc;
+            --tg-theme-button-text-color: #ffffff;
+            --tg-theme-secondary-bg-color: #f0f0f0;
+            --tg-theme-hint-color: #999999;
+            --tg-theme-link-color: #2481cc;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .header .subtitle {
+            color: var(--tg-theme-hint-color);
+            font-size: 14px;
+        }
+        
+        .status-card {
+            background: var(--tg-theme-secondary-bg-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .status-card .label {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        
+        .status-card .value {
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        .request-details {
+            background: var(--tg-theme-secondary-bg-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .request-details h2 {
+            font-size: 14px;
+            color: var(--tg-theme-hint-color);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        
+        .detail-row .label {
+            color: var(--tg-theme-hint-color);
+            font-size: 14px;
+        }
+        
+        .detail-row .value {
+            font-size: 14px;
+            font-weight: 500;
+            text-align: right;
+            max-width: 60%;
+            word-break: break-word;
+        }
+        
+        .command-preview {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 16px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+        }
+        
+        .btn-icon {
+            font-size: 20px;
+        }
+        
+        .error-message {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c00;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .error-message.visible {
+            display: block;
+        }
+        
+        .success-message {
+            background: #efe;
+            border: 1px solid #cfc;
+            color: #060;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+            text-align: center;
+        }
+        
+        .success-message.visible {
+            display: block;
+        }
+        
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .countdown {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color);
+            text-align: center;
+            margin-top: 16px;
+        }
+        
+        /* Biometric manager styles */
+        .biometric-status {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .biometric-status.available {
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            display: block;
+        }
+        
+        .biometric-status.unavailable {
+            background: #fff7e6;
+            border: 1px solid #ffd591;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ KingCrab PAM</h1>
+            <p class="subtitle">Elevation Request Approval</p>
+        </div>
+        
+        <div id="error" class="error-message"></div>
+        <div id="success" class="success-message"></div>
+        
+        <div id="content">
+            <!-- Biometric status -->
+            <div id="biometric-status" class="biometric-status"></div>
+            
+            <!-- Request details -->
+            <div class="request-details">
+                <h2>Request Details</h2>
+                <div class="detail-row">
+                    <span class="label">System</span>
+                    <span class="value" id="target-system">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">Requester</span>
+                    <span class="value" id="requester">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">Reason</span>
+                    <span class="value" id="reason">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">Command</span>
+                </div>
+                <div class="command-preview" id="command">-</div>
+            </div>
+            
+            <!-- Countdown -->
+            <div class="countdown" id="countdown"></div>
+            
+            <!-- Action buttons -->
+            <div class="buttons">
+                <button id="btn-authenticate" class="btn btn-primary" onclick="handleApproval()">
+                    <span class="btn-icon">🔐</span>
+                    <span>Authenticate & Approve</span>
+                </button>
+                <button id="btn-deny" class="btn btn-secondary" onclick="handleDeny()">
+                    <span class="btn-icon">❌</span>
+                    <span>Deny Request</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Success state -->
+        <div id="success-content" style="display: none; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">✅</div>
+            <h2 style="margin-bottom: 8px;">Approved!</h2>
+            <p style="color: var(--tg-theme-hint-color);">Request has been approved.</p>
+            <button class="btn btn-secondary" style="margin-top: 24px;" onclick="webApp.close()">
+                Close
+            </button>
+        </div>
+        
+        <!-- Denied state -->
+        <div id="denied-content" style="display: none; text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🚫</div>
+            <h2 style="margin-bottom: 8px;">Denied</h2>
+            <p style="color: var(--tg-theme-hint-color);">Request has been denied.</p>
+            <button class="btn btn-secondary" style="margin-top: 24px;" onclick="webApp.close()">
+                Close
+            </button>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const API_BASE = ''; // Same origin in production
+        const REQUEST_ID = new URLSearchParams(window.location.search).get('request_id');
+        
+        // Telegram WebApp
+        const webApp = window.Telegram.WebApp;
+        webApp.expand();
+        
+        // State
+        let requestData = null;
+        let biometricManager = null;
+        let isAuthenticating = false;
+        
+        // Initialize
+        async function init() {
+            // Check biometric availability
+            await initBiometric();
+            
+            // Load request details
+            await loadRequest();
+            
+            // Start countdown
+            startCountdown();
+        }
+        
+        // Initialize Biometric Manager
+        async function initBiometric() {
+            const statusEl = document.getElementById('biometric-status');
+            
+            if (!webApp.BiometricManager) {
+                statusEl.className = 'biometric-status unavailable';
+                statusEl.textContent = '⚠️ Biometric API not available on this platform';
+                return;
+            }
+            
+            try {
+                await new Promise((resolve, reject) => {
+                    webApp.BiometricManager.init((success) => {
+                        if (success) resolve();
+                        else reject(new Error('Init failed'));
+                    });
+                });
+                
+                if (webApp.BiometricManager.isBiometricAvailable) {
+                    statusEl.className = 'biometric-status available';
+                    statusEl.textContent = `✅ Biometric ready: ${webApp.BiometricManager.biometricType || 'Device ID'}`;
+                    biometricManager = webApp.BiometricManager;
+                } else {
+                    statusEl.className = 'biometric-status unavailable';
+                    statusEl.textContent = '⚠️ Biometrics not available on this device';
+                }
+            } catch (e) {
+                statusEl.className = 'biometric-status unavailable';
+                statusEl.textContent = '⚠️ Could not initialize biometrics';
+            }
+        }
+        
+        // Load request details from API
+        async function loadRequest() {
+            try {
+                const response = await fetch(`${API_BASE}/api/pam/request/${REQUEST_ID}`);
+                if (!response.ok) {
+                    showError('Request not found or expired');
+                    return;
+                }
+                
+                requestData = await response.json();
+                
+                // Update UI
+                document.getElementById('target-system').textContent = requestData.target_system || '-';
+                document.getElementById('requester').textContent = requestData.requester || '-';
+                document.getElementById('reason').textContent = requestData.reason || '-';
+                document.getElementById('command').textContent = requestData.command || '-';
+                
+            } catch (e) {
+                showError('Failed to load request: ' + e.message);
+            }
+        }
+        
+        // Countdown timer
+        let countdownInterval;
+        function startCountdown() {
+            const countdownEl = document.getElementById('countdown');
+            
+            const update = () => {
+                if (!requestData || !requestData.expires_at) return;
+                
+                const expires = new Date(requestData.expires_at);
+                const now = new Date();
+                const diff = expires - now;
+                
+                if (diff <= 0) {
+                    countdownEl.textContent = '⏰ Request expired';
+                    document.getElementById('btn-authenticate').disabled = true;
+                    document.getElementById('btn-deny').disabled = true;
+                    return;
+                }
+                
+                const minutes = Math.floor(diff / 60000);
+                const seconds = Math.floor((diff % 60000) / 1000);
+                countdownEl.textContent = `⏱️ Expires in ${minutes}:${seconds.toString().padStart(2, '0')}`;
+            };
+            
+            update();
+            countdownInterval = setInterval(update, 1000);
+        }
+        
+        // Handle approval with biometric
+        async function handleApproval() {
+            if (isAuthenticating) return;
+            if (!REQUEST_ID) {
+                showError('No request ID provided');
+                return;
+            }
+            
+            isAuthenticating = true;
+            const btn = document.getElementById('btn-authenticate');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div><span>Authenticating...</span>';
+            
+            try {
+                // Get biometric authentication
+                const token = await authenticateBiometric();
+                
+                if (!token) {
+                    // User cancelled or failed
+                    resetButton();
+                    return;
+                }
+                
+                // Submit approval
+                const response = await fetch(`${API_BASE}/api/pam/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        initData: webApp.initData,
+                        biometric_token: token,
+                        request_id: REQUEST_ID
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    showError(result.error || 'Approval failed');
+                    resetButton();
+                    return;
+                }
+                
+                // Success!
+                showSuccessState();
+                
+            } catch (e) {
+                showError(e.message || 'Authentication failed');
+                resetButton();
+            }
+        }
+        
+        // Authenticate with biometrics
+        async function authenticateBiometric() {
+            return new Promise((resolve) => {
+                // Check if we need to request access first
+                if (!webApp.BiometricManager.isAccessGranted) {
+                    webApp.BiometricManager.requestAccess(
+                        { reason: 'Required to authorize system elevation' },
+                        (granted) => {
+                            if (granted) {
+                                doAuthenticate(resolve);
+                            } else {
+                                resolve(null);
+                            }
+                        }
+                    );
+                } else {
+                    doAuthenticate(resolve);
+                }
+            });
+        }
+        
+        // Do the actual biometric authentication
+        function doAuthenticate(resolve) {
+            webApp.BiometricManager.authenticate(
+                { reason: 'Verify identity for PAM Approval' },
+                (success, token) => {
+                    if (success) {
+                        resolve(token);
+                    } else {
+                        resolve(null);
+                    }
+                }
+            );
+        }
+        
+        // Handle denial
+        async function handleDeny() {
+            if (!REQUEST_ID) return;
+            
+            // For now, just close with a callback
+            // In production, would call /api/pam/deny
+            webApp.showConfirm('Deny this elevation request?', (confirmed) => {
+                if (confirmed) {
+                    showDeniedState();
+                }
+            });
+        }
+        
+        // UI helpers
+        function showError(message) {
+            const el = document.getElementById('error');
+            el.textContent = message;
+            el.classList.add('visible');
+            
+            setTimeout(() => {
+                el.classList.remove('visible');
+            }, 5000);
+        }
+        
+        function showSuccessState() {
+            document.getElementById('content').style.display = 'none';
+            document.getElementById('success-content').style.display = 'block';
+            webApp.HapticFeedback.notificationOccurred('success');
+        }
+        
+        function showDeniedState() {
+            document.getElementById('content').style.display = 'none';
+            document.getElementById('denied-content').style.display = 'block';
+            webApp.HapticFeedback.notificationOccurred('warning');
+        }
+        
+        function resetButton() {
+            const btn = document.getElementById('btn-authenticate');
+            btn.disabled = false;
+            btn.innerHTML = '<span class="btn-icon">🔐</span><span>Authenticate & Approve</span>';
+            isAuthenticating = false;
+        }
+        
+        // Start
+        init();
+    </script>
+</body>
+</html>
