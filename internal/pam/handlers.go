@@ -109,10 +109,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleApprove(w, r)
 	case "/api/pam/request":
 		h.handleCreateRequest(w, r)
-	case "/api/pam/request/", h.handleGetRequest(w, r)
 	case "/api/pam/health":
 		h.handleHealth(w, r)
 	default:
+		// Check for /api/pam/request/{id} pattern
+		if len(r.URL.Path) > len("/api/pam/request/") && r.URL.Path[:len("/api/pam/request/")] == "/api/pam/request/" {
+			h.handleGetRequest(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }

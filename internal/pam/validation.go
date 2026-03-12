@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -100,25 +101,22 @@ func parseUser(userData string) (*TGUser, error) {
 		return nil, err
 	}
 
-	var user TGUser
-	// Simple JSON parse - in production use json.Unmarshal
-	// For now, extract fields with basic string manipulation
-	// This is a simplified version
-
 	// Check for required fields
 	if decoded == "" {
 		return nil, fmt.Errorf("empty user data")
 	}
 
-	// Use JSON unmarshaling
-	userJSON := strings.NewReader(decoded)
-	// In production: json.NewDecoder(userJSON).Decode(&user)
+	// Parse JSON - in production use json.Unmarshal
+	var user TGUser
+	if err := json.Unmarshal([]byte(decoded), &user); err != nil {
+		// Return minimal user if parse fails
+		return &TGUser{
+			ID:        0,
+			FirstName: "Unknown",
+		}, nil
+	}
 
-	// For now, return a minimal user
-	return &TGUser{
-		ID:        0, // Would be parsed from JSON
-		FirstName: "Unknown",
-	}, nil
+	return &user, nil
 }
 
 // buildDataCheckString creates the data check string per Telegram spec

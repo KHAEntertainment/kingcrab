@@ -2,8 +2,14 @@ package pam
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -146,7 +152,7 @@ func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token To
 		return fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
 
 	// In production, would call ClawVault API:
 	// return s.client.Set(ctx, key, token)
@@ -160,7 +166,7 @@ func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Tok
 		return nil, fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
 
 	// In production, would call ClawVault API:
 	// data, err := s.client.Get(ctx, key)
@@ -174,7 +180,7 @@ func (s *ClawVaultTokenStore) Delete(ctx context.Context, userID string) error {
 		return fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
 
 	// In production, would call ClawVault API:
 	// return s.client.Delete(ctx, key)
@@ -184,40 +190,106 @@ func (s *ClawVaultTokenStore) Delete(ctx context.Context, userID string) error {
 
 // ==================== Encryption Utilities ====================
 
-// Note: In production, use a proper crypto library like crypto/aes
-// These are placeholder implementations
+// EncryptedData represents the format stored on disk
+// Format: nonce (12 bytes) + ciphertext + tag (16 bytes), all hex-encoded
+type EncryptedData struct {
+	Nonce    string `json:"nonce"`
+	Cipher   string `json:"cipher"`
+	KeyID    string `json:"key_id,omitempty"`
+}
 
 // EncryptAESGCM encrypts data using AES-256-GCM
+// Returns hex-encoded nonce + ciphertext
 func EncryptAESGCM(key []byte, plaintext []byte) (string, error) {
-	// TODO: Implement actual AES-GCM encryption
-	// For now, return base64-encoded plaintext (NOT SECURE - placeholder only)
-	return fmt.Sprintf("enc:%s", string(plaintext)), nil
+	if len(key) != 32 {
+		return "", errors.New("key must be 32 bytes")
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("create cipher: %w", err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("create GCM: %w", err)
+	}
+
+	// Generate random nonce (12 bytes)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("generate nonce: %w", err)
+	}
+
+	// Encrypt
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+
+	// Split nonce + ciphertext (nonce is first 12 bytes)
+	nonceHex := hex.EncodeToString(nonce)
+	cipherHex := hex.EncodeToString(ciphertext[12:])
+
+	// Return as JSON for future extensibility
+	encData := EncryptedData{
+		Nonce: nonceHex,
+		Cipher: cipherHex,
+	}
+	result, err := json.Marshal(encData)
+	if err != nil {
+		return "", fmt.Errorf("marshal encrypted data: %w", err)
+	}
+
+	return string(result), nil
 }
 
 // DecryptAESGCM decrypts AES-256-GCM encrypted data
 func DecryptAESGCM(key []byte, ciphertext string) (string, error) {
-	// TODO: Implement actual AES-GCM decryption
-	// For now, handle placeholder
-	if len(ciphertext) > 4 && ciphertext[:4] == "enc:" {
-		return ciphertext[4:], nil
+	if len(key) != 32 {
+		return "", errors.New("key must be 32 bytes")
 	}
-	return "", fmt.Errorf("invalid ciphertext format")
+
+	// Parse encrypted data
+	var encData EncryptedData
+	if err := json.Unmarshal([]byte(ciphertext), &encData); err != nil {
+		return "", fmt.Errorf("parse encrypted data: %w", err)
+	}
+
+	// Decode hex
+	nonce, err := hex.DecodeString(encData.Nonce)
+	if err != nil {
+		return "", fmt.Errorf("decode nonce: %w", err)
+	}
+
+	cipherText, err := hex.DecodeString(encData.Cipher)
+	if err != nil {
+		return "", fmt.Errorf("decode ciphertext: %w", err)
+	}
+
+	// Create AES cipher
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("create cipher: %w", err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("create GCM: %w", err)
+	}
+
+	// Decrypt (appends tag to ciphertext internally)
+	plaintext, err := gcm.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return "", fmt.Errorf("decrypt: %w", err)
+	}
+
+	return string(plaintext), nil
 }
 
+// hexDecode decodes a hex string
 func hexDecode(s string) ([]byte, error) {
-	// Simplified hex decode
-	if len(s)%2 != 0 {
-		return nil, fmt.Errorf("odd length")
-	}
-
-	result := make([]byte, len(s)/2)
-	for i := 0; i < len(s); i += 2 {
-		var b byte
-		fmt.Sscanf(s[i:i+2], "%2x", &b)
-		result[i/2] = b
-	}
-
-	return result, nil
+	return hex.DecodeString(s)
 }
 
 // Compile-time check that stores implement TokenStore interface
