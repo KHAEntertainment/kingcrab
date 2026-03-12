@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ==================== HTTP Handlers ====================
@@ -15,6 +13,7 @@ import (
 // Handler handles PAM HTTP requests
 type Handler struct {
 	pam           *PAM
+	requestStore  RequestStore
 	botToken      string
 	allowedUsers  []User
 	requestTTL    time.Duration
@@ -22,13 +21,32 @@ type Handler struct {
 }
 
 // NewHandler creates a new PAM handler
-func NewHandler(pam *PAM, botToken string, allowedUsers []User, ttlMinutes int) *Handler {
+func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUsers []User, ttlMinutes int) *Handler {
+	// If no allowed users provided, try to load from store
+	if len(allowedUsers) == 0 {
+		allowedUsers = loadAllowedUsers(requestStore)
+	}
+
 	return &Handler{
 		pam:          pam,
+		requestStore: requestStore,
 		botToken:     botToken,
 		allowedUsers: allowedUsers,
 		requestTTL:   time.Duration(ttlMinutes) * time.Minute,
 	}
+}
+
+// loadAllowedUsers tries to load users from the store
+func loadAllowedUsers(store RequestStore) []User {
+	// Try DB store first
+	if dbStore, ok := store.(*DBRequestStore); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if users, err := dbStore.GetAuthorizedUsers(ctx); err == nil && len(users) > 0 {
+			return users
+		}
+	}
+	return nil
 }
 
 // Request types
@@ -70,23 +88,6 @@ type CreateRequestResponse struct {
 	Status       string    `json:"status"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	ApprovalURL  string    `json:"approval_url,omitempty"`
-}
-
-// In-memory request store (replace with DB in production)
-var pendingRequests = make(map[string]*PendingRequest)
-
-type PendingRequest struct {
-	ID           string    `json:"id"`
-	Command      string    `json:"command"`
-	Reason       string    `json:"reason"`
-	Requester    string    `json:"requester"`
-	TargetSystem string    `json:"target_system"`
-	Status       string    `json:"status"` // pending/approved/denied/expired
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	ApprovedBy   string    `json:"approved_by,omitempty"`
-	ApprovedAt   *time.Time `json:"approved_at,omitempty"`
-	NotifyChatID int64     `json:"notify_chat_id"`
 }
 
 // ServeHTTP implements http.Handler
@@ -213,10 +214,14 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	storedToken.LastUsedAt = time.Now()
 	h.pam.StoreToken(context.Background(), userID, *storedToken)
 
-	// Find and update the pending request
-	reqID := req.RequestID
-	pending, ok := pendingRequests[reqID]
-	if !ok {
+	// Find and update the pending request via store
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, req.RequestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		return
+	}
+	if pending == nil {
 		h.respondError(w, http.StatusNotFound, "request not found")
 		return
 	}
@@ -224,6 +229,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
 		pending.Status = "expired"
+		h.requestStore.Update(ctx, pending)
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
@@ -233,6 +239,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	pending.Status = "approved"
 	pending.ApprovedBy = userID
 	pending.ApprovedAt = &now
+	h.requestStore.Update(ctx, pending)
 
 	// TODO: Trigger actual command execution
 	// TODO: Call notify webhook
@@ -240,7 +247,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, ApproveResponse{
 		Success:   true,
 		Message:   "Elevation request approved",
-		RequestID: reqID,
+		RequestID: req.RequestID,
 	})
 }
 
@@ -260,30 +267,28 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 	// Validate command is allowed (would check against allowlist)
 	// For now, accept any command
 
-	requestID := uuid.New().String()
-	expiresAt := time.Now().Add(h.requestTTL)
+	pending := NewElevationRequest(
+		req.Command,
+		req.Reason,
+		req.Requester,
+		req.TargetSystem,
+		h.requestTTL,
+		req.NotifyChatID,
+	)
 
-	pending := &PendingRequest{
-		ID:           requestID,
-		Command:      req.Command,
-		Reason:       req.Reason,
-		Requester:    req.Requester,
-		TargetSystem: req.TargetSystem,
-		Status:       "pending",
-		CreatedAt:    time.Now(),
-		ExpiresAt:    expiresAt,
-		NotifyChatID: req.NotifyChatID,
+	ctx := context.Background()
+	if err := h.requestStore.Create(ctx, pending); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create request: %v", err))
+		return
 	}
 
-	pendingRequests[requestID] = pending
-
 	// Build approval URL for Mini App
-	approvalURL := fmt.Sprintf("/approve?request_id=%s", requestID)
+	approvalURL := fmt.Sprintf("/approve?request_id=%s", pending.ID)
 
 	h.respond(w, CreateRequestResponse{
-		RequestID:   requestID,
+		RequestID:   pending.ID,
 		Status:      "pending",
-		ExpiresAt:   expiresAt,
+		ExpiresAt:   pending.ExpiresAt,
 		ApprovalURL: approvalURL,
 	})
 }
@@ -302,8 +307,13 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pending, ok := pendingRequests[requestID]
-	if !ok {
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, requestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		return
+	}
+	if pending == nil {
 		http.NotFound(w, r)
 		return
 	}
