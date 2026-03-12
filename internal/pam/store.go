@@ -125,69 +125,6 @@ func (s *LocalEncryptedTokenStore) getEncryptionKey() ([]byte, error) {
 	return key, nil
 }
 
-// ==================== ClawVault Token Store ====================
-
-// ClawVaultTokenStore uses ClawVault for secure token storage
-type ClawVaultTokenStore struct {
-	prefix    string
-	endpoint  string
-	client    interface{} // ClawVault client interface
-}
-
-// NewClawVaultTokenStore creates a ClawVault-backed store
-func NewClawVaultTokenStore(prefix, endpoint string) (*ClawVaultTokenStore, error) {
-	// In production, would initialize actual ClawVault client here
-	// For now, return store that will fail gracefully if not connected
-
-	return &ClawVaultTokenStore{
-		prefix:   prefix,
-		endpoint: endpoint,
-		client:   nil, // Will be set if ClawVault is available
-	}, nil
-}
-
-// Store saves token to ClawVault
-func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token Token) error {
-	if s.client == nil {
-		return fmt.Errorf("ClawVault not connected")
-	}
-
-	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
-
-	// In production, would call ClawVault API:
-	// return s.client.Set(ctx, key, token)
-
-	return fmt.Errorf("ClawVault client not implemented - use local fallback")
-}
-
-// Retrieve gets token from ClawVault
-func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Token, error) {
-	if s.client == nil {
-		return nil, fmt.Errorf("ClawVault not connected")
-	}
-
-	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
-
-	// In production, would call ClawVault API:
-	// data, err := s.client.Get(ctx, key)
-
-	return nil, fmt.Errorf("ClawVault client not implemented")
-}
-
-// Delete removes token from ClawVault
-func (s *ClawVaultTokenStore) Delete(ctx context.Context, userID string) error {
-	if s.client == nil {
-		return fmt.Errorf("ClawVault not connected")
-	}
-
-	_ = fmt.Sprintf("%s/%s", s.prefix, userID) // key for future use
-
-	// In production, would call ClawVault API:
-	// return s.client.Delete(ctx, key)
-
-	return fmt.Errorf("ClawVault client not implemented")
-}
-
 // ==================== Encryption Utilities ====================
 
 // EncryptedData represents the format stored on disk

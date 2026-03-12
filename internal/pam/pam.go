@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -117,10 +119,16 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 
 	if mode.Available {
 		// Use ClawVault store
-		store, err := NewClawVaultTokenStore(p.config.ClawVault.TokenPrefix, mode.Endpoint)
-		if err != nil {
-			return nil, mode, fmt.Errorf("ClawVault store init failed: %w", err)
+		store := NewClawVaultTokenStore(p.config.ClawVault.TokenPrefix, p.config.ClawVault.TimeoutSec)
+		
+		// Verify availability
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.CheckAvailability(ctx); err != nil {
+			// Fallback to local if ClawVault isn't working
+			return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "fallback"}, nil
 		}
+		
 		return store, mode, nil
 	}
 
@@ -139,7 +147,23 @@ func (p *PAM) newFallbackStore() TokenStore {
 
 // detectClawVault checks for ClawVault availability
 func (p *PAM) detectClawVault() ClawVaultStatus {
-	// Check socket paths
+	// Primary check: secret-tool (used by ClawVault on Linux)
+	// This is the underlying mechanism ClawVault uses
+	
+	// Check if secret-tool is available (works on Linux with GNOME Keyring)
+	client := NewClawVaultClient(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	
+	if err := client.CheckAvailability(ctx); err == nil {
+		return ClawVaultStatus{
+			Available: true,
+			Mode:      "secret-tool",
+			Endpoint:  "gnome-keyring",
+		}
+	}
+
+	// Fallback: Check for socket (legacy/local ClawVault)
 	socketPaths := []string{
 		"/var/run/clawvault.sock",
 		filepath.Join(os.Getenv("HOME"), ".clawvault", "clawvault.sock"),
@@ -147,36 +171,40 @@ func (p *PAM) detectClawVault() ClawVaultStatus {
 
 	for _, path := range socketPaths {
 		if _, err := os.Stat(path); err == nil {
-			// Socket exists - try to connect
-			if p.testClawVaultConnection(path) {
-				return ClawVaultStatus{
-					Available: true,
-					Mode:      "socket",
-					Endpoint:  path,
-				}
+			return ClawVaultStatus{
+				Available: true,
+				Mode:     "socket",
+				Endpoint: path,
 			}
 		}
 	}
 
-	// Check network endpoints
+	// Fallback: Check network endpoints
 	hosts := []string{
 		"http://127.0.0.1:3000",
 		"http://127.0.0.1:3001",
 	}
 
 	for _, host := range hosts {
-		if p.testClawVaultHTTP(host) {
-			return ClawVaultStatus{
-				Available: true,
-				Mode:      "network",
-				Endpoint:  host,
+		// Simple TCP check - try to reach the endpoint
+		if strings.HasPrefix(host, "http://") {
+			host = strings.TrimPrefix(host, "http://")
+		}
+		if strings.Contains(host, ":") {
+			port := strings.Split(host, ":")[1]
+			if checkPort(strings.Split(host, ":")[0], port) {
+				return ClawVaultStatus{
+					Available: true,
+					Mode:      "network",
+					Endpoint:  "http://" + host,
+				}
 			}
 		}
 	}
 
 	// Check Tailscale
 	if tsIP := os.Getenv("CLAWVAULT_TAILSCALE_IP"); tsIP != "" {
-		if p.testClawVaultHTTP("http://" + tsIP + ":3000") {
+		if checkPort(tsIP, "3000") {
 			return ClawVaultStatus{
 				Available: true,
 				Mode:      "tailscale",
@@ -188,17 +216,15 @@ func (p *PAM) detectClawVault() ClawVaultStatus {
 	return ClawVaultStatus{Available: false}
 }
 
-// testClawVaultConnection tests socket connection
-func (p *PAM) testClawVaultConnection(socketPath string) bool {
-	// Simplified - in production would actually connect and ping
-	// For now, return true if socket exists and config allows
-	return p.config.UseClawVault != "false"
-}
-
-// testClawVaultHTTP tests HTTP endpoint
-func (p *PAM) testClawVaultHTTP(endpoint string) bool {
-	// Simplified - in production would make HTTP request
-	return p.config.UseClawVault != "false"
+// checkPort attempts a TCP connection to check if a port is open
+func checkPort(host, port string) bool {
+	address := net.JoinHostPort(host, port)
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // StoreToken stores a biometric token for a user
