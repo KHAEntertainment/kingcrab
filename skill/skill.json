@@ -1,0 +1,43 @@
+{
+  "name": "kingcrab",
+  "version": "0.1.0",
+  "description": "PAM - Request elevated commands with poll-based approval",
+  "author": "KHAEntertainment",
+  "license": "MIT",
+  "tags": ["pam", "sudo", "security", "access-control"],
+  "requirements": {
+    "python": ">=3.10"
+  },
+  "commands": [
+    {
+      "name": "request",
+      "description": "Submit a request for elevated command execution",
+      "parameters": {
+        "command": {"type": "string", "description": "The command to execute"},
+        "reason": {"type": "string", "default": "", "description": "Why needed"}
+      },
+      "examples": ["/kc request \"sudo apt install golang-go\" --reason \"Need Go\""]
+    },
+    {
+      "name": "list",
+      "description": "List requests",
+      "parameters": {
+        "status": {"type": "string", "enum": ["pending", "completed"], "default": ""}
+      },
+      "examples": ["/kc list", "/kc list pending"]
+    },
+    {
+      "name": "status",
+      "description": "Check daemon health"
+    },
+    {
+      "name": "check_polls",
+      "description": "Check poll votes and process approvals (POC feature)"
+    }
+  ],
+  "security_notes": [
+    "Approve/Deny via slash commands DISABLED for security",
+    "POC: Uses Telegram polls - user votes to approve/deny",
+    "V2: Will use dedicated Telegram bot for true 2FA"
+  ]
+}

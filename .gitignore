@@ -1,0 +1,25 @@
+# Binaries
+kingcrab
+bin/kc
+*.exe
+
+# Go
+vendor/
+*.test
+coverage.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

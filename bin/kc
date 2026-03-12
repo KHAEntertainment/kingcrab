@@ -1,0 +1,84 @@
+#!/bin/bash
+# KingCrab CLI wrapper for skill integration
+
+DAEMON_URL="http://localhost:8080"
+
+case "$1" in
+  request)
+    if [ -z "$2" ]; then
+      echo "Usage: kc request \"sudo command\" --reason \"why\""
+      exit 1
+    fi
+    
+    # Extract command and reason
+    CMD=""
+    REASON=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --reason)
+          shift
+          REASON="$1"
+          ;;
+        *)
+          CMD="$1"
+          ;;
+      esac
+      shift
+    done
+    
+    if [ -z "$REASON" ]; then
+      REASON="No reason provided"
+    fi
+    
+    RESPONSE=$(curl -s -X POST "$DAEMON_URL/request" \
+      -H "Content-Type: application/json" \
+      -d "{\"command\":\"$CMD\",\"reason\":\"$REASON\"}")
+    
+    if echo "$RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
+      ID=$(echo "$RESPONSE" | jq -r '.id')
+      echo "✅ Request created: $ID"
+      echo "Command: $CMD"
+      echo "Use: /kc approve $ID"
+    else
+      echo "❌ Failed: $(echo "$RESPONSE" | jq -r '.error // "unknown error"')"
+    fi
+    ;;
+    
+  list)
+    curl -s "$DAEMON_URL/requests" | jq -r '.[] | "ID: \(.id)\nCommand: \(.command)\nReason: \(.reason)\nStatus: \(.status)\n---\n"'
+    ;;
+    
+  approve)
+    if [ -z "$2" ]; then
+      echo "Usage: kc approve <id>"
+      exit 1
+    fi
+    RESPONSE=$(curl -s -X POST "$DAEMON_URL/approve/$2")
+    if echo "$RESPONSE" | jq -e '.status == "completed"' > /dev/null 2>&1; then
+      RESULT=$(echo "$RESPONSE" | jq -r '.result.Stdout // .result.Stderr // "completed"')
+      echo "✅ Approved and executed"
+      echo "Result: $RESULT"
+    else
+      echo "❌ Failed: $(echo "$RESPONSE" | jq -r '.error // "unknown"')"
+    fi
+    ;;
+    
+  deny)
+    if [ -z "$2" ]; then
+      echo "Usage: kc deny <id>"
+      exit 1
+    fi
+    curl -s -X POST "$DAEMON_URL/deny/$2"
+    echo "🚫 Denied request $2"
+    ;;
+    
+  *)
+    echo "KingCrab PAM CLI"
+    echo ""
+    echo "Usage:"
+    echo "  kc request \"sudo cmd\" --reason \"why\"  - Create request"
+    echo "  kc list                                      - List requests"
+    echo "  kc approve <id>                             - Approve request"
+    echo "  kc deny <id>                                 - Deny request"
+    ;;
+esac

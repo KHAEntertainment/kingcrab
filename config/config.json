@@ -1,0 +1,20 @@
+{
+  "version": "0.1.0",
+  "listen": {
+    "type": "unix",
+    "path": "/var/run/kingcrab.sock"
+  },
+  "allowedCommands": [
+    "apt install *",
+    "apt update",
+    "systemctl restart *",
+    "systemctl start *",
+    "systemctl stop *",
+    "systemctl enable *",
+    "systemctl disable *"
+  ],
+  "requireReason": true,
+  "autoApproveTimeout": 0,
+  "logDir": "/var/log/kingcrab",
+  "dataDir": "/var/lib/kingcrab"
+}
