@@ -176,8 +176,11 @@ func IsAuthorizedUser(initData *InitData, allowedUsers []User) bool {
 	return false
 }
 
-// CheckAuthorization checks authorization - fails closed if no users configured
 func CheckAuthorization(initData *InitData, allowedUsers []User) error {
+	if initData == nil || initData.User == nil {
+		return fmt.Errorf("missing user data in initData")
+	}
+
 	// Fail closed: no allowed users = no access
 	if len(allowedUsers) == 0 {
 		return fmt.Errorf("no authorized users configured")
