@@ -12,27 +12,33 @@ import (
 
 // Handler handles PAM HTTP requests
 type Handler struct {
-	pam           *PAM
-	requestStore  RequestStore
-	botToken      string
-	allowedUsers  []User
-	requestTTL    time.Duration
-	notifyWebhook string // URL to call on approval
+	pam             *PAM
+	requestStore    RequestStore
+	botToken        string
+	allowedUsers    []User
+	allowedCommands []string
+	requestTTL      time.Duration
+	notifyWebhook   string // URL to call on approval
 }
 
 // NewHandler creates a new PAM handler
-func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUsers []User, ttlMinutes int) *Handler {
+func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUsers []User, allowedCommands []string, ttlMinutes int) *Handler {
 	// If no allowed users provided, try to load from store
 	if len(allowedUsers) == 0 {
 		allowedUsers = loadAllowedUsers(requestStore)
 	}
 
+	if ttlMinutes <= 0 {
+		ttlMinutes = 5 // default 5 minutes
+	}
+
 	return &Handler{
-		pam:          pam,
-		requestStore: requestStore,
-		botToken:     botToken,
-		allowedUsers: allowedUsers,
-		requestTTL:   time.Duration(ttlMinutes) * time.Minute,
+		pam:             pam,
+		requestStore:    requestStore,
+		botToken:        botToken,
+		allowedUsers:    allowedUsers,
+		allowedCommands: allowedCommands,
+		requestTTL:      time.Duration(ttlMinutes) * time.Minute,
 	}
 }
 
@@ -291,8 +297,17 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate command is allowed (would check against allowlist)
-	// For now, accept any command
+	// Validate command is not empty
+	if req.Command == "" {
+		h.respondError(w, http.StatusBadRequest, "command required")
+		return
+	}
+
+	// Validate command against allowlist
+	if !h.isCommandAllowed(req.Command) {
+		h.respondError(w, http.StatusForbidden, "command not in allowlist")
+		return
+	}
 
 	pending := NewElevationRequest(
 		req.Command,
@@ -366,6 +381,37 @@ func (h *Handler) respondError(w http.ResponseWriter, code int, message string) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// isCommandAllowed checks if a command matches the allowlist
+func (h *Handler) isCommandAllowed(command string) bool {
+	// If no allowlist configured, reject all (fail closed)
+	if len(h.allowedCommands) == 0 {
+		return false
+	}
+
+	for _, pattern := range h.allowedCommands {
+		if matchCommand(pattern, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchCommand checks if a command matches a pattern (* = wildcard)
+func matchCommand(pattern, command string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if pattern == command {
+		return true
+	}
+	// Simple wildcard support: "systemctl restart *"
+	if len(pattern) > 1 && pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(command) >= len(prefix) && command[:len(prefix)] == prefix
+	}
+	return false
 }
 
 // Compile-time check

@@ -104,7 +104,7 @@ func (c *ClawVaultClient) SetSecret(ctx context.Context, key, value string) erro
 
 // DeleteSecret removes a secret
 func (c *ClawVaultClient) DeleteSecret(ctx context.Context, key string) error {
-	cmd := exec.CommandContext(ctx, "secret-tool", "delete", "kingcrab", key)
+	cmd := exec.CommandContext(ctx, "secret-tool", "clear", "kingcrab", key)
 	
 
 	var stderr bytes.Buffer
@@ -139,11 +139,13 @@ func (c *ClawVaultClient) SearchSecret(ctx context.Context, key string) (bool, e
 // CheckAvailability tests if clawvault/secret-tool is available
 func (c *ClawVaultClient) CheckAvailability(ctx context.Context) error {
 	// Check for secret-tool (works on Linux with GNOME Keyring)
-	cmd := exec.CommandContext(ctx, "secret-tool", "--version")
-	
+	if _, err := exec.LookPath("secret-tool"); err != nil {
+		return fmt.Errorf("secret-tool not found: %w", err)
+	}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("secret-tool not available: %w", err)
+	// Also check for clawvault binary (needed for GetSecret/resolve)
+	if _, err := exec.LookPath("clawvault"); err != nil {
+		return fmt.Errorf("clawvault not found: %w", err)
 	}
 
 	return nil
