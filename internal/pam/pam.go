@@ -110,7 +110,11 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 
 	// Check config override
 	if p.config.UseClawVault == "false" {
-		return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "disabled"}, nil
+		store, err := p.newFallbackStore()
+		if err != nil {
+			return nil, ClawVaultStatus{Available: false, Mode: "disabled"}, err
+		}
+		return store, ClawVaultStatus{Available: false, Mode: "disabled"}, nil
 	}
 
 	if p.config.UseClawVault == "true" && !mode.Available {
@@ -125,19 +129,31 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := store.CheckAvailability(ctx); err != nil {
-			// Fallback to local if ClawVault isn't working
-			return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "fallback"}, nil
+			// If explicitly required, fail; otherwise fallback
+			if p.config.UseClawVault == "true" {
+				mode.Error = err
+				return nil, mode, fmt.Errorf("clawvault required but availability check failed: %w", err)
+			}
+			store, fallbackErr := p.newFallbackStore()
+			if fallbackErr != nil {
+				return nil, ClawVaultStatus{Available: false, Mode: "fallback", Error: err}, fallbackErr
+			}
+			return store, ClawVaultStatus{Available: false, Mode: "fallback", Error: err}, nil
 		}
 		
 		return store, mode, nil
 	}
 
 	// Fallback to local
-	return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "fallback"}, nil
+	store, err := p.newFallbackStore()
+	if err != nil {
+		return nil, ClawVaultStatus{Available: false, Mode: "fallback"}, err
+	}
+	return store, ClawVaultStatus{Available: false, Mode: "fallback"}, nil
 }
 
 // newFallbackStore creates local encrypted storage
-func (p *PAM) newFallbackStore() TokenStore {
+func (p *PAM) newFallbackStore() (TokenStore, error) {
 	storagePath := p.config.Fallback.StoragePath
 	if storagePath == "" {
 		storagePath = filepath.Join(os.Getenv("HOME"), ".config", "kingcrab", "tokens")
@@ -229,8 +245,8 @@ func checkPort(host, port string) bool {
 
 // StoreToken stores a biometric token for a user
 func (p *PAM) StoreToken(ctx context.Context, userID string, token Token) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.store.Store(ctx, userID, token)
 }
 
@@ -243,8 +259,8 @@ func (p *PAM) RetrieveToken(ctx context.Context, userID string) (*Token, error) 
 
 // DeleteToken removes a user's biometric token
 func (p *PAM) DeleteToken(ctx context.Context, userID string) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.store.Delete(ctx, userID)
 }
 

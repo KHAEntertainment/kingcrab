@@ -47,6 +47,7 @@ func NewConnection(cfg Config) (*Connection, error) {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
@@ -140,9 +141,10 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
 			approved_at TIMESTAMP WITH TIME ZONE,
 			executed_at TIMESTAMP WITH TIME ZONE,
-			approved_by INTEGER REFERENCES enrolled_devices(id),
+			approved_by TEXT,
 			ip_address VARCHAR(45),
 			user_agent VARCHAR(512),
+			notify_chat_id BIGINT,
 			output TEXT,
 			exit_code INTEGER
 		)`,

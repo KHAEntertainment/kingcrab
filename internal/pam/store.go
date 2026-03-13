@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,14 +25,22 @@ type LocalEncryptedTokenStore struct {
 }
 
 // NewLocalEncryptedTokenStore creates a new local encrypted store
-func NewLocalEncryptedTokenStore(storagePath, keyEnv string) *LocalEncryptedTokenStore {
+func NewLocalEncryptedTokenStore(storagePath, keyEnv string) (*LocalEncryptedTokenStore, error) {
 	// Ensure storage directory exists
-	os.MkdirAll(storagePath, 0700)
+	if err := os.MkdirAll(storagePath, 0700); err != nil {
+		return nil, fmt.Errorf("create storage directory: %w", err)
+	}
 
 	return &LocalEncryptedTokenStore{
 		storagePath: storagePath,
 		keyEnv:      keyEnv,
-	}
+	}, nil
+}
+
+// sanitizeUserID prevents path traversal by hashing the userID
+func sanitizeUserID(userID string) string {
+	h := sha256.Sum256([]byte(userID))
+	return hex.EncodeToString(h[:])
 }
 
 // Store saves an encrypted token
@@ -55,7 +64,7 @@ func (s *LocalEncryptedTokenStore) Store(ctx context.Context, userID string, tok
 	}
 
 	// Write to file
-	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", userID))
+	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", sanitizeUserID(userID)))
 	if err := os.WriteFile(path, []byte(encrypted), 0600); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
@@ -65,7 +74,7 @@ func (s *LocalEncryptedTokenStore) Store(ctx context.Context, userID string, tok
 
 // Retrieve gets and decrypts a token
 func (s *LocalEncryptedTokenStore) Retrieve(ctx context.Context, userID string) (*Token, error) {
-	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", userID))
+	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", sanitizeUserID(userID)))
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -98,7 +107,7 @@ func (s *LocalEncryptedTokenStore) Retrieve(ctx context.Context, userID string) 
 
 // Delete removes a user's token
 func (s *LocalEncryptedTokenStore) Delete(ctx context.Context, userID string) error {
-	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", userID))
+	path := filepath.Join(s.storagePath, fmt.Sprintf("%s.enc", sanitizeUserID(userID)))
 
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
@@ -237,26 +246,29 @@ var (
 
 // InitLocalTokenStore initializes local store with encryption key from env
 func InitLocalTokenStore(ctx context.Context, storagePath, keyEnvVar string) (TokenStore, error) {
-	key := os.Getenv(keyEnvVar)
-	if key == "" {
+	// Validate the key exists and is valid before creating store
+	keyHex := os.Getenv(keyEnvVar)
+	if keyHex == "" {
 		return nil, fmt.Errorf("environment variable %s not set", keyEnvVar)
 	}
 
-	store := NewLocalEncryptedTokenStore(storagePath, keyEnvVar)
+	key, err := hexDecode(keyHex)
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("invalid encryption key (need 32 bytes hex): %w", err)
+	}
 
-	// Verify we can access encryption key
-	_, err := store.Retrieve(ctx, "test-key-validity")
-	if err != nil && !os.IsNotExist(fmt.Errorf("", err)) {
-		return nil, fmt.Errorf("encryption key invalid: %w", err)
+	store, err := NewLocalEncryptedTokenStore(storagePath, keyEnvVar)
+	if err != nil {
+		return nil, fmt.Errorf("create store: %w", err)
 	}
 
 	return store, nil
 }
 
-// TokenExpirationChecker checks if a token is still valid
+// TokenExpirationChecker checks if a token is still valid (not expired)
 func TokenExpirationChecker(token *Token, ttlMinutes int) bool {
-	if token == nil {
+	if token == nil || ttlMinutes <= 0 {
 		return false
 	}
-	return time.Since(token.LastUsedAt) > time.Duration(ttlMinutes)*time.Minute
+	return time.Since(token.LastUsedAt) <= time.Duration(ttlMinutes)*time.Minute
 }

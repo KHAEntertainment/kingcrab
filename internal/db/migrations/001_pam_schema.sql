@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS elevation_requests (
     executed_at     TIMESTAMP WITH TIME ZONE,
     
     -- Approval info
-    approved_by     INTEGER REFERENCES enrolled_devices(id),
+    approved_by     TEXT,                     -- User identity string (e.g., "tg:12345")
     
     -- Network info (for audit)
     ip_address      VARCHAR(45),                    -- IPv6 compatible
@@ -167,10 +167,8 @@ CREATE TRIGGER update_users_updated_at
 -- CLEANUP JOBS (run via cron)
 -- ============================================
 
--- Example: Delete expired requests older than 30 days
--- SELECT cleanup_expired_requests(30);
-
-CREATE OR REPLACE FUNCTION cleanup_expired_requests(retention_days INTEGER DEFAULT 30)
+-- Delete old completed requests using approved_at (terminal timestamp)
+CREATE OR REPLACE FUNCTION cleanup_completed_requests(retention_days INTEGER DEFAULT 30)
 RETURNS INTEGER AS $$
 DECLARE
     deleted_count INTEGER;
@@ -181,10 +179,10 @@ BEGIN
     WHERE status = 'pending' 
     AND expires_at < NOW();
     
-    -- Delete old completed requests
+    -- Delete old completed requests based on terminal timestamp
     DELETE FROM elevation_requests 
     WHERE status IN ('approved', 'denied', 'expired', 'failed')
-    AND created_at < NOW() - (retention_days || ' days')::INTERVAL;
+    AND COALESCE(approved_at, created_at) < NOW() - (retention_days || ' days')::INTERVAL;
     
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;

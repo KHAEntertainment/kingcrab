@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -144,15 +145,18 @@ func (s *DBRequestStore) Delete(ctx context.Context, id string) error {
 }
 
 // LogAudit logs an approval action
-func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID, deviceID, userID *int, ipAddress, userAgent string, details map[string]interface{}) error {
-	detailsJSON, _ := json.Marshal(details)
+func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID *string, deviceID *int, userID *int, ipAddress, userAgent string, details map[string]interface{}) error {
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("marshal details: %w", err)
+	}
 
 	query := `
 		INSERT INTO approval_audit 
 		(request_id, device_id, user_id, action, ip_address, user_agent, details)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	_, err := s.db.ExecContext(ctx, query, requestID, deviceID, userID, action, ipAddress, userAgent, detailsJSON)
+	_, err = s.db.ExecContext(ctx, query, requestID, deviceID, userID, action, ipAddress, userAgent, detailsJSON)
 	return err
 }
 
