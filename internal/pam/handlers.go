@@ -142,6 +142,12 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
 	// Check authorization
 	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
@@ -155,7 +161,7 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		DeviceInfo:   req.DeviceInfo,
 		EnrolledAt:   time.Now(),
 		LastUsedAt:   time.Now(),
-		TokenStorage: "local", // or "clawvault" based on PAM config
+		TokenStorage: "local",
 	}
 
 	if err := h.pam.StoreToken(context.Background(), userID, token); err != nil {
@@ -183,6 +189,12 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
 	// Validate initData
 	initData, err := ValidateInitDataFromRequest(req.InitData, h.botToken)
 	if err != nil {
@@ -204,7 +216,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify token matches (in production, would do proper token comparison)
+	// Verify token matches
 	if storedToken.Value != req.BiometricToken {
 		h.respondError(w, http.StatusUnauthorized, "biometric token mismatch")
 		return
@@ -212,7 +224,10 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Update token last used
 	storedToken.LastUsedAt = time.Now()
-	h.pam.StoreToken(context.Background(), userID, *storedToken)
+	if err := h.pam.StoreToken(context.Background(), userID, *storedToken); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update token usage: %v", err))
+		return
+	}
 
 	// Find and update the pending request via store
 	ctx := context.Background()
@@ -229,8 +244,17 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
 		pending.Status = "expired"
-		h.requestStore.Update(ctx, pending)
+		if err := h.requestStore.Update(ctx, pending); err != nil {
+			h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+			return
+		}
 		h.respondError(w, http.StatusGone, "request expired")
+		return
+	}
+
+	// Only approve requests that are still pending
+	if pending.Status != "pending" {
+		h.respondError(w, http.StatusConflict, "request already processed")
 		return
 	}
 
@@ -239,7 +263,10 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	pending.Status = "approved"
 	pending.ApprovedBy = userID
 	pending.ApprovedAt = &now
-	h.requestStore.Update(ctx, pending)
+	if err := h.requestStore.Update(ctx, pending); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+		return
+	}
 
 	// TODO: Trigger actual command execution
 	// TODO: Call notify webhook

@@ -15,11 +15,11 @@ import (
 
 // InitData represents parsed Telegram initData
 type InitData struct {
-	QueryID     string    `json:"query_id"`
-	User        *TGUser   `json:"user"`
-	AuthDate    time.Time `json:"auth_date"`
-	Hash        string    `json:"hash"`
-	Raw         string    `json:"raw"` // Original query string
+	QueryID    string    `json:"query_id"`
+	User       *TGUser   `json:"user"`
+	AuthDate   time.Time `json:"auth_date"`
+	Hash       string    `json:"hash"`
+	Raw        string    `json:"raw"` // Original query string
 }
 
 // TGUser represents a Telegram user from initData
@@ -78,18 +78,22 @@ func ValidateInitData(initDataString, botToken string, maxAge time.Duration) (*I
 	// Build data check string (all params except hash, sorted by key)
 	dataCheckString := buildDataCheckString(params)
 
-	// Validate hash
-	expectedHash := computeHMACSHA256(dataCheckString, botToken)
+	// Derive secret key: HMAC-SHA256(key="WebAppData", message=botToken)
+	// Per Telegram spec: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+	secretKey := computeHMACSHA256(botToken, "WebAppData")
+
+	// Validate hash using derived secret
+	expectedHash := computeHMACSHA256(dataCheckString, secretKey)
 	if !hmac.Equal([]byte(expectedHash), []byte(hash)) {
 		return nil, fmt.Errorf("invalid hash (possible spoofing attempt)")
 	}
 
 	return &InitData{
-		QueryID:   params.Get("query_id"),
-		User:      user,
-		AuthDate:  authDate,
-		Hash:      hash,
-		Raw:       initDataString,
+		QueryID: params.Get("query_id"),
+		User:    user,
+		AuthDate: authDate,
+		Hash:    hash,
+		Raw:     initDataString,
 	}, nil
 }
 
@@ -101,19 +105,14 @@ func parseUser(userData string) (*TGUser, error) {
 		return nil, err
 	}
 
-	// Check for required fields
 	if decoded == "" {
 		return nil, fmt.Errorf("empty user data")
 	}
 
-	// Parse JSON - in production use json.Unmarshal
+	// Parse JSON
 	var user TGUser
 	if err := json.Unmarshal([]byte(decoded), &user); err != nil {
-		// Return minimal user if parse fails
-		return &TGUser{
-			ID:        0,
-			FirstName: "Unknown",
-		}, nil
+		return nil, fmt.Errorf("parse user JSON: %w", err)
 	}
 
 	return &user, nil
@@ -141,15 +140,14 @@ func buildDataCheckString(params url.Values) string {
 	return strings.Join(parts, "\n")
 }
 
-// computeHMACSHA256 computes HMAC-SHA256
-func computeHMACSHA256(data, secret string) string {
-	h := hmac.New(sha256.New, []byte(secret))
+// computeHMACSHA256 computes HMAC-SHA256 with data as message and key as secret
+func computeHMACSHA256(data, key string) string {
+	h := hmac.New(sha256.New, []byte(key))
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ValidateInitDataFromRequest validates initData from HTTP request
-// Convenience function that extracts from query string or header
 func ValidateInitDataFromRequest(initData string, botToken string) (*InitData, error) {
 	// Default max age: 24 hours (Telegram recommendation)
 	return ValidateInitData(initData, botToken, 24*time.Hour)
@@ -178,15 +176,11 @@ func IsAuthorizedUser(initData *InitData, allowedUsers []User) bool {
 	return false
 }
 
-// Example allowed users (would come from config)
-var defaultAllowedUsers = []User{
-	{TelegramID: 6778651323, Name: "Billy"},
-}
-
-// CheckAuthorization is a convenience function
+// CheckAuthorization checks authorization - fails closed if no users configured
 func CheckAuthorization(initData *InitData, allowedUsers []User) error {
+	// Fail closed: no allowed users = no access
 	if len(allowedUsers) == 0 {
-		allowedUsers = defaultAllowedUsers
+		return fmt.Errorf("no authorized users configured")
 	}
 
 	if !IsAuthorizedUser(initData, allowedUsers) {
