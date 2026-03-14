@@ -12,6 +12,7 @@ type RequestStore interface {
 	Create(ctx context.Context, req *ElevationRequest) error
 	Get(ctx context.Context, id string) (*ElevationRequest, error)
 	Update(ctx context.Context, req *ElevationRequest) error
+	UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error)
 	ListPending(ctx context.Context) ([]*ElevationRequest, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -75,6 +76,29 @@ func (s *InMemoryRequestStore) Get(ctx context.Context, id string) (*ElevationRe
 func (s *InMemoryRequestStore) Update(ctx context.Context, req *ElevationRequest) error {
 	s.requests[req.ID] = req
 	return nil
+}
+
+// UpdateStateIf atomically updates state only if current state matches expected
+func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
+	req, exists := s.requests[id]
+	if !exists {
+		return false, nil
+	}
+
+	if req.Status != expectedState {
+		return false, nil
+	}
+
+	// Perform state transition
+	req.Status = newState
+	if approvedBy != "" {
+		req.ApprovedBy = approvedBy
+		now := time.Now()
+		req.ApprovedAt = &now
+	}
+
+	s.requests[id] = req
+	return true, nil
 }
 
 // ListPending returns all pending requests

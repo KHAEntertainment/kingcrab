@@ -85,16 +85,20 @@ func (h *WebhookHandler) handleDeny(ctx context.Context, cq *CallbackQuery, requ
 		return
 	}
 
-	// Check if already processed
-	if req.Status != "pending" {
-		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Request already processed", false)
+	// Atomically deny the request (only if still pending)
+	username := cq.From.Username
+	if username == "" {
+		username = fmt.Sprintf("tg:%d", cq.From.ID)
+	}
+
+	success, err := h.requestStore.UpdateStateIf(ctx, requestID, "pending", "denied", username)
+	if err != nil {
+		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Error updating request", true)
 		return
 	}
 
-	// Update request status
-	req.Status = "denied"
-	if err := h.requestStore.Update(ctx, req); err != nil {
-		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Error updating request", true)
+	if !success {
+		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Request already processed", false)
 		return
 	}
 
@@ -192,9 +196,9 @@ type User struct {
 
 // CallbackQuery represents a callback query
 type CallbackQuery struct {
-	ID       string   `json:"id"`
-	From     *User    `json:"from"`
-	Message  *Message `json:"message,omitempty"`
-	Data     string   `json:"data,omitempty"`
-	ChatInstance int64 `json:"chat_instance"`
+	ID           string   `json:"id"`
+	From         *User    `json:"from"`
+	Message      *Message `json:"message,omitempty"`
+	Data         string   `json:"data,omitempty"`
+	ChatInstance string   `json:"chat_instance"`
 }

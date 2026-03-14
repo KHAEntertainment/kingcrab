@@ -94,6 +94,32 @@ func (s *DBRequestStore) Update(ctx context.Context, req *ElevationRequest) erro
 	return err
 }
 
+// UpdateStateIf atomically updates state only if current state matches expected
+func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
+	query := `
+		UPDATE elevation_requests
+		SET status = $2, approved_by = $3, approved_at = NOW()
+		WHERE id = $1 AND status = $4
+	`
+
+	var approvedByPtr *string
+	if approvedBy != "" {
+		approvedByPtr = &approvedBy
+	}
+
+	result, err := s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rowsAffected > 0, nil
+}
+
 // ListPending returns all pending requests
 func (s *DBRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, error) {
 	query := `

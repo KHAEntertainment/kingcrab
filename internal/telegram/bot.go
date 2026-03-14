@@ -102,8 +102,8 @@ func (b *Bot) BuildApprovalKeyboard(requestID string) *InlineKeyboardMarkup {
 			{
 				{
 					Text:   "🔐 Authenticate & Approve",
-					URL:    approvalURL,
-					Type:   "url",
+					WebApp: &WebAppInfo{URL: approvalURL},
+					Type:   "webapp",
 				},
 			},
 			{
@@ -128,8 +128,8 @@ func (b *Bot) BuildApprovalMessage(req *ElevationRequest) string {
 <b>Reason:</b> %s
 
 ⏱️ Expires: %s`,
-		req.TargetSystem,
-		req.Requester,
+		escapeHTML(req.TargetSystem),
+		escapeHTML(req.Requester),
 		escapeHTML(req.Command),
 		escapeHTML(req.Reason),
 		req.ExpiresAt.Format("15:04 MST"),
@@ -152,9 +152,9 @@ func (b *Bot) BuildApprovalResultMessage(req *ElevationRequest, approved bool, a
 <b>By:</b> %s
 <b>Time:</b> %s`,
 			emoji,
-			req.TargetSystem,
+			escapeHTML(req.TargetSystem),
 			escapeHTML(req.Command),
-			approver,
+			escapeHTML(approver),
 			time.Now().Format("15:04 MST"),
 		)
 	} else {
@@ -166,7 +166,7 @@ func (b *Bot) BuildApprovalResultMessage(req *ElevationRequest, approved bool, a
 <pre>%s</pre>
 <b>Time:</b> %s`,
 			emoji,
-			req.TargetSystem,
+			escapeHTML(req.TargetSystem),
 			escapeHTML(req.Command),
 			time.Now().Format("15:04 MST"),
 		)

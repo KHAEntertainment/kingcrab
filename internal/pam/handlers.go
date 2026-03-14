@@ -94,6 +94,7 @@ type DenyResponse struct {
 }
 
 type CreateRequestRequest struct {
+	InitData     string `json:"initData"`
 	Command      string `json:"command"`
 	Reason       string `json:"reason"`
 	Requester    string `json:"requester"`
@@ -264,28 +265,21 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
-		pending.Status = "expired"
-		if err := h.requestStore.Update(ctx, pending); err != nil {
-			h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
-			return
-		}
+		// Try to atomically set to expired if still pending
+		h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
 
-	// Only approve requests that are still pending
-	if pending.Status != "pending" {
-		h.respondError(w, http.StatusConflict, "request already processed")
+	// Atomically approve the request (only if still pending)
+	success, err := h.requestStore.UpdateStateIf(ctx, req.RequestID, "pending", "approved", userID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
 		return
 	}
 
-	// Approve the request
-	now := time.Now()
-	pending.Status = "approved"
-	pending.ApprovedBy = userID
-	pending.ApprovedAt = &now
-	if err := h.requestStore.Update(ctx, pending); err != nil {
-		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+	if !success {
+		h.respondError(w, http.StatusConflict, "request already processed")
 		return
 	}
 
@@ -366,28 +360,21 @@ func (h *Handler) handleDeny(w http.ResponseWriter, r *http.Request) {
 
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
-		pending.Status = "expired"
-		if err := h.requestStore.Update(ctx, pending); err != nil {
-			h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
-			return
-		}
+		// Try to atomically set to expired if still pending
+		h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
 
-	// Only deny requests that are still pending
-	if pending.Status != "pending" {
-		h.respondError(w, http.StatusConflict, "request already processed")
+	// Atomically deny the request (only if still pending)
+	success, err := h.requestStore.UpdateStateIf(ctx, req.RequestID, "pending", "denied", userID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
 		return
 	}
 
-	// Deny the request
-	now := time.Now()
-	pending.Status = "denied"
-	pending.ApprovedBy = userID // Store who denied it
-	pending.ApprovedAt = &now   // Use approved_at as terminal timestamp
-	if err := h.requestStore.Update(ctx, pending); err != nil {
-		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+	if !success {
+		h.respondError(w, http.StatusConflict, "request already processed")
 		return
 	}
 
@@ -411,6 +398,42 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 	var req CreateRequestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Authenticate caller via initData
+	initDataHeader := r.Header.Get("X-Telegram-Init-Data")
+	if initDataHeader == "" {
+		// Fallback to JSON field for backwards compatibility
+		initDataHeader = req.InitData
+	}
+
+	initData, err := ValidateInitDataFromRequest(initDataHeader, h.botToken)
+	if err != nil {
+		// Log authentication failure for auditing
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx := context.Background()
+			dbStore.LogAudit(ctx, "create_request_denied", nil, nil, nil, r.RemoteAddr, r.UserAgent(), map[string]interface{}{
+				"reason": "invalid_initdata",
+				"error":  err.Error(),
+			})
+		}
+		h.respondError(w, http.StatusUnauthorized, fmt.Sprintf("invalid initData: %v", err))
+		return
+	}
+
+	// Authorize caller
+	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+		// Log authorization failure for auditing
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx := context.Background()
+			userID := int(initData.User.ID)
+			dbStore.LogAudit(ctx, "create_request_denied", nil, nil, &userID, r.RemoteAddr, r.UserAgent(), map[string]interface{}{
+				"reason": "unauthorized",
+				"error":  err.Error(),
+			})
+		}
+		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
 
