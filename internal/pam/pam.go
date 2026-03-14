@@ -165,17 +165,50 @@ func (p *PAM) newFallbackStore() (TokenStore, error) {
 func (p *PAM) detectClawVault() ClawVaultStatus {
 	// Primary check: secret-tool (used by ClawVault on Linux)
 	// This is the underlying mechanism ClawVault uses
-	
+
 	// Check if secret-tool is available (works on Linux with GNOME Keyring)
 	client := NewClawVaultClient(2)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	
+
 	if err := client.CheckAvailability(ctx); err == nil {
 		return ClawVaultStatus{
 			Available: true,
 			Mode:      "secret-tool",
 			Endpoint:  "gnome-keyring",
+		}
+	}
+
+	// Check configured socket first (if provided)
+	if p.config.ClawVault.Socket != "" {
+		if _, err := os.Stat(p.config.ClawVault.Socket); err == nil {
+			return ClawVaultStatus{
+				Available: true,
+				Mode:      "socket",
+				Endpoint:  p.config.ClawVault.Socket,
+			}
+		}
+	}
+
+	// Check configured host first (if provided)
+	if p.config.ClawVault.Host != "" {
+		host := p.config.ClawVault.Host
+		// Simple TCP check - try to reach the endpoint
+		if strings.HasPrefix(host, "http://") {
+			host = strings.TrimPrefix(host, "http://")
+		}
+		if strings.HasPrefix(host, "https://") {
+			host = strings.TrimPrefix(host, "https://")
+		}
+		if strings.Contains(host, ":") {
+			port := strings.Split(host, ":")[1]
+			if checkPort(strings.Split(host, ":")[0], port) {
+				return ClawVaultStatus{
+					Available: true,
+					Mode:      "network",
+					Endpoint:  p.config.ClawVault.Host,
+				}
+			}
 		}
 	}
 
@@ -253,8 +286,33 @@ func (p *PAM) StoreToken(ctx context.Context, userID string, token Token) error 
 // RetrieveToken retrieves a user's biometric token
 func (p *PAM) RetrieveToken(ctx context.Context, userID string) (*Token, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.store.Retrieve(ctx, userID)
+	token, err := p.store.Retrieve(ctx, userID)
+	p.mu.RUnlock()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if token == nil {
+		return nil, nil
+	}
+
+	// Check if token has expired using configured TTL
+	ttl := p.config.Fallback.TTLMinutes
+	if ttl > 0 && !TokenExpirationChecker(token, ttl) {
+		// Token has expired, delete it
+		p.mu.Lock()
+		deleteErr := p.store.Delete(ctx, userID)
+		p.mu.Unlock()
+
+		if deleteErr != nil {
+			return nil, fmt.Errorf("token expired and failed to delete: %w", deleteErr)
+		}
+
+		return nil, fmt.Errorf("token expired (TTL: %d minutes)", ttl)
+	}
+
+	return token, nil
 }
 
 // DeleteToken removes a user's biometric token

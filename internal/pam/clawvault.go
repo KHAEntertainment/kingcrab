@@ -67,6 +67,14 @@ func (c *ClawVaultClient) GetSecret(ctx context.Context, key string) (string, er
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		// Check if this is an exec failure (binary missing)
+		if execErr, ok := err.(*exec.Error); ok {
+			return "", fmt.Errorf("clawvault binary not found or not executable: %w", execErr)
+		}
+		// Check if this is a non-zero exit (command ran but failed)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("clawvault resolve failed with exit code %d: %s", exitErr.ExitCode(), stderr.String())
+		}
 		return "", fmt.Errorf("clawvault resolve failed: %w - %s", err, stderr.String())
 	}
 
@@ -197,7 +205,7 @@ func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Tok
 		// Fall back to clawvault resolve
 		data, err = s.client.GetSecret(ctx, key)
 		if err != nil {
-			return nil, fmt.Errorf("get secret: %w", err)
+			return nil, fmt.Errorf("failed to retrieve secret from clawvault: %w", err)
 		}
 	}
 
