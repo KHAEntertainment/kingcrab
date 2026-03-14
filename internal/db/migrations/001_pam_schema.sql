@@ -109,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON elevation_requests(status);
 CREATE INDEX IF NOT EXISTS idx_requests_created ON elevation_requests(created_at);
 CREATE INDEX IF NOT EXISTS idx_requests_expires ON elevation_requests(expires_at);
 CREATE INDEX IF NOT EXISTS idx_requests_requester ON elevation_requests(requester);
+CREATE INDEX IF NOT EXISTS idx_requests_approved ON elevation_requests(approved_at);
 
 -- ============================================
 -- APPROVAL AUDIT LOG
@@ -174,16 +175,20 @@ DECLARE
     deleted_count INTEGER;
 BEGIN
     -- Mark expired requests
-    UPDATE elevation_requests 
-    SET status = 'expired' 
-    WHERE status = 'pending' 
-    AND expires_at < NOW();
-    
-    -- Delete old completed requests based on terminal timestamp
-    DELETE FROM elevation_requests 
+    UPDATE elevation_requests
+    SET status = 'expired',
+        approved_at = NOW()  -- Set terminal timestamp when transitioning to terminal state
+    WHERE status = 'pending'
+    AND expires_at < NOW()
+    AND approved_at IS NULL;  -- Only update if not already set
+
+    -- Delete old completed requests based on terminal timestamp (approved_at)
+    -- For terminal statuses, approved_at is used as the timestamp when status became terminal
+    DELETE FROM elevation_requests
     WHERE status IN ('approved', 'denied', 'expired', 'failed')
-    AND COALESCE(approved_at, created_at) < NOW() - (retention_days || ' days')::INTERVAL;
-    
+    AND approved_at IS NOT NULL
+    AND approved_at < NOW() - (retention_days || ' days')::INTERVAL;
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

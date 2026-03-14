@@ -80,6 +80,19 @@ type ApproveResponse struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
+type DenyRequest struct {
+	InitData        string `json:"initData"`
+	BiometricToken  string `json:"biometric_token"`
+	RequestID       string `json:"request_id"`
+	Reason          string `json:"reason"`
+}
+
+type DenyResponse struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
 type CreateRequestRequest struct {
 	Command      string `json:"command"`
 	Reason       string `json:"reason"`
@@ -114,6 +127,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleEnroll(w, r)
 	case "/api/pam/approve":
 		h.handleApprove(w, r)
+	case "/api/pam/deny":
+		h.handleDeny(w, r)
 	case "/api/pam/request":
 		h.handleCreateRequest(w, r)
 	case "/api/pam/health":
@@ -280,6 +295,108 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, ApproveResponse{
 		Success:   true,
 		Message:   "Elevation request approved",
+		RequestID: req.RequestID,
+	})
+}
+
+// handleDeny handles elevation request denial
+func (h *Handler) handleDeny(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req DenyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
+	// Validate initData
+	initData, err := ValidateInitDataFromRequest(req.InitData, h.botToken)
+	if err != nil {
+		h.respondError(w, http.StatusUnauthorized, fmt.Sprintf("invalid initData: %v", err))
+		return
+	}
+
+	// Check authorization
+	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+		h.respondError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	// Verify biometric token
+	userID := InitDataToUserID(initData)
+	storedToken, err := h.pam.RetrieveToken(context.Background(), userID)
+	if err != nil || storedToken == nil {
+		h.respondError(w, http.StatusUnauthorized, "no enrolled device found")
+		return
+	}
+
+	// Verify token matches
+	if storedToken.Value != req.BiometricToken {
+		h.respondError(w, http.StatusUnauthorized, "biometric token mismatch")
+		return
+	}
+
+	// Update token last used
+	storedToken.LastUsedAt = time.Now()
+	if err := h.pam.StoreToken(context.Background(), userID, *storedToken); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update token usage: %v", err))
+		return
+	}
+
+	// Find and update the pending request via store
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, req.RequestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		return
+	}
+	if pending == nil {
+		h.respondError(w, http.StatusNotFound, "request not found")
+		return
+	}
+
+	// Check expiration
+	if time.Now().After(pending.ExpiresAt) {
+		pending.Status = "expired"
+		if err := h.requestStore.Update(ctx, pending); err != nil {
+			h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+			return
+		}
+		h.respondError(w, http.StatusGone, "request expired")
+		return
+	}
+
+	// Only deny requests that are still pending
+	if pending.Status != "pending" {
+		h.respondError(w, http.StatusConflict, "request already processed")
+		return
+	}
+
+	// Deny the request
+	now := time.Now()
+	pending.Status = "denied"
+	pending.ApprovedBy = userID // Store who denied it
+	pending.ApprovedAt = &now   // Use approved_at as terminal timestamp
+	if err := h.requestStore.Update(ctx, pending); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+		return
+	}
+
+	// TODO: Audit log the denial with reason
+	// TODO: Call notify webhook
+
+	h.respond(w, DenyResponse{
+		Success:   true,
+		Message:   "Elevation request denied",
 		RequestID: req.RequestID,
 	})
 }

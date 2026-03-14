@@ -285,7 +285,8 @@ func DefaultPAMConfig() *PAMConfig {
 			TimeoutSec:  5,
 		},
 		Fallback: FallbackConfig{
-			TTLMinutes: 5,
+			EncryptionKeyEnv: "PAM_FALLBACK_ENCRYPTION_KEY",
+			TTLMinutes:       5,
 		},
 	}
 }

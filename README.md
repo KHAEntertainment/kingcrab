@@ -83,7 +83,7 @@ Edit `/etc/kingcrab/config.json`:
   "autoApproveTimeout": 0,
   "telegram": {
     "botToken": "YOUR_BOT_TOKEN",
-    "allowedUsers": ["YOUR_TELEGRAM_USER_ID"]
+    "allowedUsers": [123456789]
   }
 }
 ```

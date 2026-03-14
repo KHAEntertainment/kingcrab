@@ -132,7 +132,7 @@ class KingCrabPlugin extends Plugin {
       }
 
       // Check against allowlist
-      const isAllowed = this.config.allowedCommands.some(pattern => {
+      const isAllowed = this.config.allowedCommands.some((pattern: string) => {
         const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
         return regex.test(command);
       });
@@ -401,7 +401,8 @@ ${pending
   // ==========================================================================
 
   getUIPath(): string {
-    return __dirname + '/ui.html';
+    // Note: __dirname is not available in ESM, use import.meta.url in actual runtime
+    return './ui.html';
   }
 }
 
