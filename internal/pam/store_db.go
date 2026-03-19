@@ -98,18 +98,34 @@ func (s *DBRequestStore) Update(ctx context.Context, req *ElevationRequest) erro
 
 // UpdateStateIf atomically updates state only if current state matches expected
 func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
-	query := `
-		UPDATE elevation_requests
-		SET status = $2, approved_by = $3, approved_at = NOW()
-		WHERE id = $1 AND status = $4
-	`
+	var query string
+	var result sql.Result
+	var err error
 
-	var approvedByPtr *string
-	if approvedBy != "" {
-		approvedByPtr = &approvedBy
+	// Only set approval metadata when transitioning to "approved" state
+	if newState == "approved" {
+		// Also reject expired requests in the same transaction
+		query = `
+			UPDATE elevation_requests
+			SET status = $2, approved_by = $3, approved_at = NOW()
+			WHERE id = $1 AND status = $4 AND expires_at > NOW()
+		`
+		var approvedByPtr *string
+		if approvedBy != "" {
+			approvedByPtr = &approvedBy
+		}
+		result, err = s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
+	} else {
+		// For non-approved states, clear approval metadata
+		// Also reject expired requests in the same transaction
+		query = `
+			UPDATE elevation_requests
+			SET status = $2, approved_by = NULL, approved_at = NULL
+			WHERE id = $1 AND status = $3 AND expires_at > NOW()
+		`
+		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState)
 	}
 
-	result, err := s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
 	if err != nil {
 		return false, err
 	}

@@ -52,6 +52,44 @@ func NewElevationRequest(command, reason, requester, targetSystem string, ttl ti
 	}
 }
 
+// deepCopyElevationRequest creates a deep copy of an ElevationRequest
+func deepCopyElevationRequest(req *ElevationRequest) *ElevationRequest {
+	if req == nil {
+		return nil
+	}
+
+	copy := &ElevationRequest{
+		ID:           req.ID,
+		Command:      req.Command,
+		Reason:       req.Reason,
+		Requester:    req.Requester,
+		TargetSystem: req.TargetSystem,
+		Status:       req.Status,
+		CreatedAt:    req.CreatedAt,
+		ExpiresAt:    req.ExpiresAt,
+		ApprovedBy:   req.ApprovedBy,
+		NotifyChatID: req.NotifyChatID,
+		IPAddress:    req.IPAddress,
+		UserAgent:    req.UserAgent,
+	}
+
+	// Copy pointer fields
+	if req.ApprovedAt != nil {
+		approvedAt := *req.ApprovedAt
+		copy.ApprovedAt = &approvedAt
+	}
+	if req.Output != nil {
+		output := *req.Output
+		copy.Output = &output
+	}
+	if req.ExitCode != nil {
+		exitCode := *req.ExitCode
+		copy.ExitCode = &exitCode
+	}
+
+	return copy
+}
+
 // InMemoryRequestStore is a simple in-memory implementation for development
 type InMemoryRequestStore struct {
 	mu       sync.RWMutex
@@ -69,7 +107,8 @@ func NewInMemoryRequestStore() *InMemoryRequestStore {
 func (s *InMemoryRequestStore) Create(ctx context.Context, req *ElevationRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests[req.ID] = req
+	// Store a deep copy to prevent caller mutations
+	s.requests[req.ID] = deepCopyElevationRequest(req)
 	return nil
 }
 
@@ -77,14 +116,16 @@ func (s *InMemoryRequestStore) Create(ctx context.Context, req *ElevationRequest
 func (s *InMemoryRequestStore) Get(ctx context.Context, id string) (*ElevationRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.requests[id], nil
+	// Return a deep copy to prevent caller mutations
+	return deepCopyElevationRequest(s.requests[id]), nil
 }
 
 // Update modifies an existing request
 func (s *InMemoryRequestStore) Update(ctx context.Context, req *ElevationRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests[req.ID] = req
+	// Store a deep copy to prevent caller mutations
+	s.requests[req.ID] = deepCopyElevationRequest(req)
 	return nil
 }
 
@@ -102,15 +143,29 @@ func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, exp
 		return false, nil
 	}
 
-	// Perform state transition
-	req.Status = newState
-	if approvedBy != "" {
-		req.ApprovedBy = approvedBy
-		now := time.Now()
-		req.ApprovedAt = &now
+	// Reject expired requests - cannot approve/deny expired requests
+	if time.Now().After(req.ExpiresAt) {
+		return false, nil
 	}
 
-	s.requests[id] = req
+	// Make a deep copy for mutation to avoid modifying the stored instance
+	reqCopy := deepCopyElevationRequest(req)
+
+	// Perform state transition
+	reqCopy.Status = newState
+
+	// Only set approval metadata when transitioning to "approved" state
+	if newState == "approved" && approvedBy != "" {
+		reqCopy.ApprovedBy = approvedBy
+		now := time.Now()
+		reqCopy.ApprovedAt = &now
+	} else {
+		// Clear approval metadata for non-approved states
+		reqCopy.ApprovedBy = ""
+		reqCopy.ApprovedAt = nil
+	}
+
+	s.requests[id] = reqCopy
 	return true, nil
 }
 
@@ -122,7 +177,8 @@ func (s *InMemoryRequestStore) ListPending(ctx context.Context) ([]*ElevationReq
 	var result []*ElevationRequest
 	for _, req := range s.requests {
 		if req.Status == "pending" && time.Now().Before(req.ExpiresAt) {
-			result = append(result, req)
+			// Return deep copies to prevent caller mutations
+			result = append(result, deepCopyElevationRequest(req))
 		}
 	}
 	return result, nil
