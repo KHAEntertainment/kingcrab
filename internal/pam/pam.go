@@ -154,7 +154,12 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 func (p *PAM) newFallbackStore() (TokenStore, error) {
 	storagePath := p.config.Fallback.StoragePath
 	if storagePath == "" {
-		storagePath = filepath.Join(os.Getenv("HOME"), ".config", "kingcrab", "tokens")
+		// First try to get a reliable home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine home directory for token storage: %w", err)
+		}
+		storagePath = filepath.Join(homeDir, ".config", "kingcrab", "tokens")
 	}
 	return NewLocalEncryptedTokenStore(storagePath, p.config.Fallback.EncryptionKeyEnv)
 }
@@ -298,16 +303,32 @@ func (p *PAM) RetrieveToken(ctx context.Context, userID string) (*Token, error) 
 	// Check if token has expired using configured TTL
 	ttl := p.config.Fallback.TTLMinutes
 	if ttl > 0 && !TokenExpirationChecker(token, ttl) {
-		// Token has expired, delete it
+		// Token appears expired - acquire write lock and re-check to avoid TOCTOU race
 		p.mu.Lock()
-		deleteErr := p.store.Delete(ctx, userID)
-		p.mu.Unlock()
+		defer p.mu.Unlock()
 
-		if deleteErr != nil {
-			return nil, fmt.Errorf("token expired and failed to delete: %w", deleteErr)
+		// Re-retrieve token under write lock
+		freshToken, retrieveErr := p.store.Retrieve(ctx, userID)
+		if retrieveErr != nil {
+			return nil, retrieveErr
 		}
 
-		return nil, fmt.Errorf("token expired (TTL: %d minutes)", ttl)
+		if freshToken == nil {
+			return nil, nil
+		}
+
+		// Re-evaluate expiry with fresh token
+		if !TokenExpirationChecker(freshToken, ttl) {
+			// Still expired, safe to delete
+			deleteErr := p.store.Delete(ctx, userID)
+			if deleteErr != nil {
+				return nil, fmt.Errorf("token expired and failed to delete: %w", deleteErr)
+			}
+			return nil, fmt.Errorf("token expired (TTL: %d minutes)", ttl)
+		}
+
+		// Token is actually still valid, return it
+		return freshToken, nil
 	}
 
 	return token, nil
