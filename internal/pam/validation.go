@@ -62,8 +62,22 @@ func ValidateInitData(initDataString, botToken string, maxAge time.Duration) (*I
 	}
 
 	authDate := time.Unix(authDateUnix, 0)
-	if maxAge > 0 && time.Since(authDate) > maxAge {
-		return nil, fmt.Errorf("initData expired (age: %v, max: %v)", time.Since(authDate), maxAge)
+
+	// Check timestamp validity with clock skew tolerance
+	now := time.Now()
+	const clockSkew = 5 * time.Minute
+
+	// Reject future-dated auth_date (beyond clock skew tolerance)
+	if authDate.After(now.Add(clockSkew)) {
+		return nil, fmt.Errorf("auth_date is in the future (possible clock skew or replay attack)")
+	}
+
+	// Check expiration using consistent now value
+	if maxAge > 0 {
+		age := now.Sub(authDate)
+		if age > maxAge {
+			return nil, fmt.Errorf("initData expired (age: %v, max: %v)", age, maxAge)
+		}
 	}
 
 	// Extract user data
