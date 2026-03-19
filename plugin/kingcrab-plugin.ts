@@ -8,6 +8,8 @@
 
 import { Plugin, PluginConfig, HTTPClient } from '@openclaw/plugin-core';
 import { z } from 'zod';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
 
 // ============================================================================
 // Types & Schemas
@@ -403,8 +405,9 @@ ${pending
   // ==========================================================================
 
   getUIPath(): string {
-    // Note: __dirname is not available in ESM, use import.meta.url in actual runtime
-    return './ui.html';
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    return resolve(__dirname, 'ui.html');
   }
 }
 
