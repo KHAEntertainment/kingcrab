@@ -100,10 +100,11 @@ func parseUser(userData string) (*TGUser, error) {
 		return nil, err
 	}
 
-	var user TGUser
 	// Simple JSON parse - in production use json.Unmarshal
 	// For now, extract fields with basic string manipulation
 	// This is a simplified version
+	var user TGUser
+	_ = user // suppress unused warning; would be populated in production
 
 	// Check for required fields
 	if decoded == "" {
@@ -111,8 +112,7 @@ func parseUser(userData string) (*TGUser, error) {
 	}
 
 	// Use JSON unmarshaling
-	userJSON := strings.NewReader(decoded)
-	// In production: json.NewDecoder(userJSON).Decode(&user)
+	// In production: json.NewDecoder(strings.NewReader(decoded)).Decode(&user)
 
 	// For now, return a minimal user
 	return &TGUser{

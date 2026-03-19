@@ -146,9 +146,8 @@ func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token To
 		return fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
-
 	// In production, would call ClawVault API:
+	// key := fmt.Sprintf("%s/%s", s.prefix, userID)
 	// return s.client.Set(ctx, key, token)
 
 	return fmt.Errorf("ClawVault client not implemented - use local fallback")
@@ -160,9 +159,8 @@ func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Tok
 		return nil, fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
-
 	// In production, would call ClawVault API:
+	// key := fmt.Sprintf("%s/%s", s.prefix, userID)
 	// data, err := s.client.Get(ctx, key)
 
 	return nil, fmt.Errorf("ClawVault client not implemented")
@@ -174,9 +172,8 @@ func (s *ClawVaultTokenStore) Delete(ctx context.Context, userID string) error {
 		return fmt.Errorf("ClawVault not connected")
 	}
 
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
-
 	// In production, would call ClawVault API:
+	// key := fmt.Sprintf("%s/%s", s.prefix, userID)
 	// return s.client.Delete(ctx, key)
 
 	return fmt.Errorf("ClawVault client not implemented")
