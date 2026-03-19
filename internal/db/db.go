@@ -100,10 +100,14 @@ func (c *Connection) Close() error {
 // RunMigrations runs the database migrations
 func (c *Connection) RunMigrations(ctx context.Context) error {
 	migrations := []string{
+		// Enable UUID extension
+		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+
 		// authorized_users
 		`CREATE TABLE IF NOT EXISTS authorized_users (
 			id SERIAL PRIMARY KEY,
 			telegram_id BIGINT UNIQUE,
+			clawvault_id VARCHAR(255) UNIQUE,
 			username VARCHAR(255),
 			display_name VARCHAR(255),
 			auth_mode VARCHAR(20) DEFAULT 'biometric',
@@ -111,7 +115,7 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			CONSTRAINT one_identity CHECK (
-				(telegram_id IS NOT NULL)
+				(telegram_id IS NOT NULL) OR (clawvault_id IS NOT NULL)
 			)
 		)`,
 
@@ -131,7 +135,7 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 
 		// elevation_requests
 		`CREATE TABLE IF NOT EXISTS elevation_requests (
-			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			requester VARCHAR(255) NOT NULL,
 			target_system VARCHAR(255) NOT NULL,
 			command TEXT NOT NULL,
@@ -144,7 +148,6 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 			approved_by TEXT,
 			ip_address VARCHAR(45),
 			user_agent VARCHAR(512),
-			notify_chat_id BIGINT,
 			output TEXT,
 			exit_code INTEGER
 		)`,
@@ -164,6 +167,7 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 
 		// Indexes
 		`CREATE INDEX IF NOT EXISTS idx_users_telegram ON authorized_users(telegram_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_users_clawvault ON authorized_users(clawvault_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_active ON authorized_users(is_active)`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_user ON enrolled_devices(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_devices_active ON enrolled_devices(is_active)`,

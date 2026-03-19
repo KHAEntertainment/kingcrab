@@ -133,7 +133,9 @@ class KingCrabPlugin extends Plugin {
 
       // Check against allowlist
       const isAllowed = this.config.allowedCommands.some((pattern: string) => {
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+        // Escape regex special characters except *, then convert * to .*
+        const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+        const regex = new RegExp('^' + escaped + '$');
         return regex.test(command);
       });
 
@@ -284,8 +286,8 @@ class KingCrabPlugin extends Plugin {
       switch (subCommand) {
         case 'request':
           // Usage: /kc request <command> [--reason <reason>]
-          const command = args[0];
           const reasonIndex = args.indexOf('--reason');
+          const command = reasonIndex !== -1 ? args.slice(0, reasonIndex).join(' ') : args.join(' ');
           const reason = reasonIndex !== -1 ? args.slice(reasonIndex + 1).join(' ') : '';
 
           if (!command) {

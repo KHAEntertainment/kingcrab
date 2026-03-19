@@ -83,9 +83,7 @@ type ClawVaultStatus struct {
 // NewPAM creates a new PAM instance
 func NewPAM(config *PAMConfig) (*PAM, error) {
 	if config == nil {
-		config = &PAMConfig{
-			UseClawVault: "auto",
-		}
+		config = DefaultPAMConfig()
 	}
 
 	pam := &PAM{

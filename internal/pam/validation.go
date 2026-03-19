@@ -94,10 +94,11 @@ func ValidateInitData(initDataString, botToken string, maxAge time.Duration) (*I
 
 	// Derive secret key: HMAC-SHA256(key="WebAppData", message=botToken)
 	// Per Telegram spec: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
-	secretKey := computeHMACSHA256(botToken, "WebAppData")
+	secretKey := computeHMACSHA256Bytes([]byte(botToken), []byte("WebAppData"))
 
 	// Validate hash using derived secret
-	expectedHash := computeHMACSHA256(dataCheckString, secretKey)
+	expectedHashBytes := computeHMACSHA256Bytes([]byte(dataCheckString), secretKey)
+	expectedHash := hex.EncodeToString(expectedHashBytes)
 	if !hmac.Equal([]byte(expectedHash), []byte(hash)) {
 		return nil, fmt.Errorf("invalid hash (possible spoofing attempt)")
 	}
@@ -152,6 +153,13 @@ func buildDataCheckString(params url.Values) string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+// computeHMACSHA256Bytes computes HMAC-SHA256 and returns raw bytes
+func computeHMACSHA256Bytes(data, key []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
 }
 
 // computeHMACSHA256 computes HMAC-SHA256 with data as message and key as secret

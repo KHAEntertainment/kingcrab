@@ -127,8 +127,11 @@ func (s *LocalEncryptedTokenStore) getEncryptionKey() ([]byte, error) {
 	}
 
 	key, err := hexDecode(keyHex)
-	if err != nil || len(key) != 32 {
-		return nil, fmt.Errorf("invalid key (need 32 bytes hex)")
+	if err != nil {
+		return nil, fmt.Errorf("invalid key (need 32 bytes hex): %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("invalid key: must be 32 bytes hex (got %d bytes)", len(key))
 	}
 
 	return key, nil
@@ -258,8 +261,11 @@ func InitLocalTokenStore(ctx context.Context, storagePath, keyEnvVar string) (To
 	}
 
 	key, err := hexDecode(keyHex)
-	if err != nil || len(key) != 32 {
+	if err != nil {
 		return nil, fmt.Errorf("invalid encryption key (need 32 bytes hex): %w", err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("invalid encryption key: must be 32 bytes hex (got %d bytes)", len(key))
 	}
 
 	store, err := NewLocalEncryptedTokenStore(storagePath, keyEnvVar)

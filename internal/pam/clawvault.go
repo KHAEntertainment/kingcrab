@@ -125,10 +125,25 @@ func (c *ClawVaultClient) DeleteSecret(ctx context.Context, key string) error {
 	return nil
 }
 
+// LookupSecret retrieves a secret value directly from keyring
+func (c *ClawVaultClient) LookupSecret(ctx context.Context, key string) (string, error) {
+	cmd := exec.CommandContext(ctx, "secret-tool", "lookup", "kingcrab", key)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("secret-tool lookup failed: %w - %s", err, stderr.String())
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // SearchSecret checks if a secret exists
 func (c *ClawVaultClient) SearchSecret(ctx context.Context, key string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "secret-tool", "search", "kingcrab", key)
-	
+
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -199,8 +214,8 @@ func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token To
 func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Token, error) {
 	key := fmt.Sprintf("%s/%s", s.prefix, userID)
 
-	// Try secret-tool first (direct keyring access)
-	data, err := s.client.GetSecret(ctx, key)
+	// Try secret-tool lookup first (direct keyring access)
+	data, err := s.client.LookupSecret(ctx, key)
 	if err != nil {
 		// Fall back to clawvault resolve
 		data, err = s.client.GetSecret(ctx, key)

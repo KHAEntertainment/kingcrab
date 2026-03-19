@@ -19,19 +19,21 @@ type RequestStore interface {
 
 // ElevationRequest represents an elevation request
 type ElevationRequest struct {
-	ID           string    `json:"id"`
-	Command      string    `json:"command"`
-	Reason       string    `json:"reason"`
-	Requester    string    `json:"requester"`
-	TargetSystem string    `json:"target_system"`
-	Status       string    `json:"status"` // pending/approved/denied/expired
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	ApprovedBy   string    `json:"approved_by,omitempty"`
+	ID           string     `json:"id"`
+	Command      string     `json:"command"`
+	Reason       string     `json:"reason"`
+	Requester    string     `json:"requester"`
+	TargetSystem string     `json:"target_system"`
+	Status       string     `json:"status"` // pending/approved/denied/expired
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	ApprovedBy   string     `json:"approved_by,omitempty"`
 	ApprovedAt   *time.Time `json:"approved_at,omitempty"`
-	NotifyChatID int64     `json:"notify_chat_id"`
-	IPAddress    string    `json:"ip_address,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
+	NotifyChatID int64      `json:"notify_chat_id"`
+	IPAddress    string     `json:"ip_address,omitempty"`
+	UserAgent    string     `json:"user_agent,omitempty"`
+	Output       *string    `json:"output,omitempty"`
+	ExitCode     *int       `json:"exit_code,omitempty"`
 }
 
 // NewElevationRequest creates a new elevation request
