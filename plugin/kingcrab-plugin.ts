@@ -6,7 +6,7 @@
  * Version: 0.1.0
  */
 
-import { Plugin, PluginConfig, HTTPClient } from '@openclaw/plugin-core';
+import { Plugin, PluginConfig, HTTPClient } from './plugin-core.js';
 import { z } from 'zod';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
