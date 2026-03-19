@@ -76,9 +76,8 @@ func (b *Bot) AnswerCallbackQuery(ctx context.Context, callbackID string, text s
 // SetWebhook sets the webhook for the bot
 func (b *Bot) SetWebhook(ctx context.Context, url string) error {
 	payload := map[string]interface{}{
-		"url":            url,
-		"allow_pending":  true,
-		"drop_pending":   false,
+		"url":                   url,
+		"drop_pending_updates":  false,
 	}
 
 	return b.sendRequest(ctx, "setWebhook", payload)

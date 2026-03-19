@@ -224,6 +224,11 @@ func DecryptAESGCM(key []byte, ciphertext string) (string, error) {
 		return "", fmt.Errorf("create GCM: %w", err)
 	}
 
+	// Validate nonce size before decryption
+	if len(nonce) != gcm.NonceSize() {
+		return "", fmt.Errorf("invalid nonce size: got %d, expected %d", len(nonce), gcm.NonceSize())
+	}
+
 	// Decrypt (appends tag to ciphertext internally)
 	plaintext, err := gcm.Open(nil, nonce, cipherText, nil)
 	if err != nil {
