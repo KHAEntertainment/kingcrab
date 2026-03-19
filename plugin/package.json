@@ -18,6 +18,7 @@
   "author": "KHAEntertainment",
   "license": "MIT",
   "dependencies": {
+    "@openclaw/plugin-core": "^0.1.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {
