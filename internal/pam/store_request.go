@@ -2,6 +2,7 @@ package pam
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +54,7 @@ func NewElevationRequest(command, reason, requester, targetSystem string, ttl ti
 
 // InMemoryRequestStore is a simple in-memory implementation for development
 type InMemoryRequestStore struct {
+	mu       sync.RWMutex
 	requests map[string]*ElevationRequest
 }
 
@@ -65,23 +67,32 @@ func NewInMemoryRequestStore() *InMemoryRequestStore {
 
 // Create adds a new request
 func (s *InMemoryRequestStore) Create(ctx context.Context, req *ElevationRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.requests[req.ID] = req
 	return nil
 }
 
 // Get retrieves a request by ID
 func (s *InMemoryRequestStore) Get(ctx context.Context, id string) (*ElevationRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.requests[id], nil
 }
 
 // Update modifies an existing request
 func (s *InMemoryRequestStore) Update(ctx context.Context, req *ElevationRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.requests[req.ID] = req
 	return nil
 }
 
 // UpdateStateIf atomically updates state only if current state matches expected
 func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	req, exists := s.requests[id]
 	if !exists {
 		return false, nil
@@ -105,6 +116,9 @@ func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, exp
 
 // ListPending returns all pending requests
 func (s *InMemoryRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	var result []*ElevationRequest
 	for _, req := range s.requests {
 		if req.Status == "pending" && time.Now().Before(req.ExpiresAt) {
@@ -116,6 +130,8 @@ func (s *InMemoryRequestStore) ListPending(ctx context.Context) ([]*ElevationReq
 
 // Delete removes a request
 func (s *InMemoryRequestStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.requests, id)
 	return nil
 }

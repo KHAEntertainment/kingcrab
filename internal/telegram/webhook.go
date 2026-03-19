@@ -14,19 +14,30 @@ type WebhookHandler struct {
 	bot          *Bot
 	requestStore pam.RequestStore
 	notifyURL    string // URL to call when request is approved/denied
+	secretToken  string // Secret token for webhook verification
 }
 
 // NewWebhookHandler creates a new webhook handler
-func NewWebhookHandler(bot *Bot, requestStore pam.RequestStore, notifyURL string) *WebhookHandler {
+func NewWebhookHandler(bot *Bot, requestStore pam.RequestStore, notifyURL string, secretToken string) *WebhookHandler {
 	return &WebhookHandler{
 		bot:          bot,
 		requestStore: requestStore,
 		notifyURL:    notifyURL,
+		secretToken:  secretToken,
 	}
 }
 
 // Handle processes incoming webhook requests
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Verify webhook origin using secret token
+	if h.secretToken != "" {
+		receivedToken := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+		if receivedToken != h.secretToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	var update Update
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -78,6 +89,12 @@ func (h *WebhookHandler) handleCallbackQuery(ctx context.Context, cq *CallbackQu
 
 // handleDeny handles denial of a request
 func (h *WebhookHandler) handleDeny(ctx context.Context, cq *CallbackQuery, requestID string) {
+	// Guard against nil From
+	if cq.From == nil {
+		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Invalid callback query", true)
+		return
+	}
+
 	// Get request
 	req, err := h.requestStore.Get(ctx, requestID)
 	if err != nil || req == nil {
@@ -105,9 +122,11 @@ func (h *WebhookHandler) handleDeny(ctx context.Context, cq *CallbackQuery, requ
 	// Send confirmation
 	h.bot.AnswerCallbackQuery(ctx, cq.ID, "Request denied", false)
 
-	// Update message
-	msg := h.bot.BuildApprovalResultMessage(toElevationRequest(req), false, cq.From.Username)
-	h.bot.EditMessageText(ctx, cq.Message.Chat.ID, cq.Message.MessageID, msg, nil)
+	// Update message if available
+	if cq.Message != nil && cq.Message.Chat != nil {
+		msg := h.bot.BuildApprovalResultMessage(toElevationRequest(req), false, cq.From.Username)
+		h.bot.EditMessageText(ctx, cq.Message.Chat.ID, cq.Message.MessageID, msg, nil)
+	}
 
 	// Notify external system if configured
 	if h.notifyURL != "" {

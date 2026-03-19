@@ -449,10 +449,13 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use server-validated identity instead of client-supplied requester
+	requester := InitDataToUserID(initData)
+
 	pending := NewElevationRequest(
 		req.Command,
 		req.Reason,
-		req.Requester,
+		requester,
 		req.TargetSystem,
 		h.requestTTL,
 		req.NotifyChatID,
@@ -489,14 +492,33 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authenticate caller via initData
+	initDataHeader := r.Header.Get("X-Telegram-Init-Data")
+	if initDataHeader == "" {
+		h.respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	initData, err := ValidateInitDataFromRequest(initDataHeader, h.botToken)
+	if err != nil {
+		h.respondError(w, http.StatusUnauthorized, "invalid authentication")
+		return
+	}
+
+	// Authorize caller
+	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+		h.respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
 	ctx := context.Background()
 	pending, err := h.requestStore.Get(ctx, requestID)
 	if err != nil {
-		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		h.respondError(w, http.StatusInternalServerError, "error retrieving request")
 		return
 	}
 	if pending == nil {
-		http.NotFound(w, r)
+		h.respondError(w, http.StatusNotFound, "request not found")
 		return
 	}
 
