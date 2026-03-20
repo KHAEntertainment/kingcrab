@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 // the non-wildcard pattern tokens; if the pattern has no trailing '*', token
 // counts must be equal). Commands or patterns that are empty do not match, and
 // any command containing shell metacharacters/operators is rejected.
+// Commands or patterns with mismatched or unclosed quotes are rejected.
 func TokenizeAndMatch(pattern, command string) bool {
 	if pattern == "*" {
 		return true
@@ -26,9 +28,15 @@ func TokenizeAndMatch(pattern, command string) bool {
 		return true
 	}
 
-	// Tokenize pattern and command by whitespace
-	patternTokens := tokenizeCommand(pattern)
-	commandTokens := tokenizeCommand(command)
+	// Tokenize pattern and command, rejecting on quote errors
+	patternTokens, err := tokenizeCommand(pattern)
+	if err != nil {
+		return false
+	}
+	commandTokens, err := tokenizeCommand(command)
+	if err != nil {
+		return false
+	}
 
 	if len(patternTokens) == 0 || len(commandTokens) == 0 {
 		return false
@@ -69,53 +77,48 @@ func TokenizeAndMatch(pattern, command string) bool {
 	return true
 }
 
-// tokenizeCommand splits the input string s into whitespace-separated tokens
-// while handling quoted arguments. Single and double quotes preserve whitespace
-// within quoted strings as single tokens. Returns an error if quotes are mismatched.
-// It treats space, tab, newline, and carriage return as delimiters and omits
-// empty tokens produced by consecutive delimiters. The returned slice contains
-// tokens in their original order.
-func tokenizeCommand(s string) []string {
+// tokenizeCommand splits the input string s into tokens, honouring single and
+// double quotes so that whitespace inside a quoted span is preserved as part of
+// a single token (quotes themselves are stripped from the result). It returns
+// an error if a quoted section is never closed. It treats space, tab, newline,
+// and carriage return as delimiters outside of quoted spans and omits empty
+// tokens produced by consecutive delimiters. The returned slice contains tokens
+// in their original order.
+func tokenizeCommand(s string) ([]string, error) {
 	var tokens []string
 	var current []rune
 	var inQuote rune // 0 = not in quote, '\'' or '"' = in quote
 
-	for i, ch := range s {
-		// Handle quote boundaries
-		if (ch == '\'' || ch == '"') && (i == 0 || s[i-1] != '\\') {
-			if inQuote == 0 {
-				// Start quoted section
-				inQuote = ch
-			} else if inQuote == ch {
-				// End quoted section (matching quote)
-				inQuote = 0
-			} else {
-				// Different quote type inside quoted section - just add it
-				current = append(current, ch)
-			}
-			continue
-		}
-
-		// Handle whitespace
-		if inQuote == 0 && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+	for _, ch := range s {
+		switch {
+		case (ch == '\'' || ch == '"') && inQuote == 0:
+			// Opening quote — enter quoted span without adding the quote char.
+			inQuote = ch
+		case ch == inQuote:
+			// Closing quote — leave quoted span without adding the quote char.
+			inQuote = 0
+		case inQuote == 0 && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'):
+			// Unquoted whitespace — flush the current token if non-empty.
 			if len(current) > 0 {
 				tokens = append(tokens, string(current))
 				current = nil
 			}
-		} else {
-			// Regular character or quoted whitespace
+		default:
+			// Regular character, or whitespace/opposite-quote inside a quoted span.
 			current = append(current, ch)
 		}
 	}
 
-	// Add final token if any
+	if inQuote != 0 {
+		return nil, fmt.Errorf("unclosed quote %c in command", inQuote)
+	}
+
+	// Flush the final token.
 	if len(current) > 0 {
 		tokens = append(tokens, string(current))
 	}
 
-	// If we ended while still in a quote, that's an error condition
-	// but we'll return what we have (caller will handle validation)
-	return tokens
+	return tokens, nil
 }
 
 // containsShellMetacharacters reports whether the token contains any shell
@@ -193,7 +196,10 @@ func (e *Executor) Execute(command string) (*ExecuteResult, error) {
 	defer cancel()
 
 	// Tokenize command and execute directly without shell
-	argv := tokenizeCommand(command)
+	argv, err := tokenizeCommand(command)
+	if err != nil {
+		return nil, fmt.Errorf("invalid command: %w", err)
+	}
 	if len(argv) == 0 {
 		return nil, errors.New("empty command")
 	}
@@ -206,20 +212,16 @@ func (e *Executor) Execute(command string) (*ExecuteResult, error) {
 	}
 
 	// Create buffers to capture stdout and stderr separately
-	var stdoutBuf, stderrBuf []byte
 	var stdoutBuilder, stderrBuilder strings.Builder
 	cmd.Stdout = &stdoutBuilder
 	cmd.Stderr = &stderrBuilder
 
-	err := cmd.Run()
+	err = cmd.Run()
 	durationMs := time.Since(start).Milliseconds()
 
-	stdoutBuf = []byte(stdoutBuilder.String())
-	stderrBuf = []byte(stderrBuilder.String())
-
 	result := &ExecuteResult{
-		Stdout:   string(stdoutBuf),
-		Stderr:   string(stderrBuf),
+		Stdout:   stdoutBuilder.String(),
+		Stderr:   stderrBuilder.String(),
 		Duration: durationMs,
 	}
 
