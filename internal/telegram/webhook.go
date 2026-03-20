@@ -56,13 +56,13 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle /start command
-	if update.Message != nil && update.Message.Text == "/start" {
+	if update.Message != nil && update.Message.Chat != nil && update.Message.Text == "/start" {
 		h.handleStart(ctx, update.Message.Chat.ID)
 		return
 	}
 
 	// Handle /status command
-	if update.Message != nil && update.Message.Text == "/status" {
+	if update.Message != nil && update.Message.Chat != nil && update.Message.Text == "/status" {
 		h.handleStatus(ctx, update.Message.Chat.ID)
 		return
 	}
@@ -102,6 +102,12 @@ func (h *WebhookHandler) handleDeny(ctx context.Context, cq *CallbackQuery, requ
 	req, err := h.requestStore.Get(ctx, requestID)
 	if err != nil || req == nil {
 		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Request not found", true)
+		return
+	}
+
+	// Check if request has expired
+	if time.Now().After(req.ExpiresAt) {
+		h.bot.AnswerCallbackQuery(ctx, cq.ID, "Request expired", true)
 		return
 	}
 

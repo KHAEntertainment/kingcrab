@@ -167,18 +167,21 @@ func (c *ClawVaultClient) SearchSecret(ctx context.Context, key string) (bool, e
 
 	cmd := exec.CommandContext(timedCtx, "secret-tool", "search", "kingcrab", key)
 
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// Exit code 0 = found, non-zero = not found or error
-		if strings.Contains(stderr.String(), "not found") {
-			return false, nil
-		}
+		// Non-zero exit code: return error with stderr
 		return false, fmt.Errorf("secret-tool search failed: %w - %s", err, stderr.String())
 	}
 
-	return true, nil
+	// Exit code 0: check stdout to determine if found
+	if len(strings.TrimSpace(stdout.String())) == 0 {
+		return false, nil // Not found (empty stdout)
+	}
+
+	return true, nil // Found (non-empty stdout)
 }
 
 // CheckAvailability tests if clawvault/secret-tool is available
@@ -216,7 +219,7 @@ func NewClawVaultTokenStore(prefix string, timeoutSec int) *ClawVaultTokenStore 
 
 // Store saves token to ClawVault
 func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token Token) error {
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	key := fmt.Sprintf("%s/%s", s.prefix, sanitizeUserID(userID))
 
 	// Serialize token to JSON
 	data, err := json.Marshal(token)
@@ -234,7 +237,7 @@ func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token To
 
 // Retrieve gets token from ClawVault
 func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Token, error) {
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	key := fmt.Sprintf("%s/%s", s.prefix, sanitizeUserID(userID))
 
 	// Try secret-tool lookup first (direct keyring access)
 	data, err := s.client.LookupSecret(ctx, key)
@@ -261,7 +264,7 @@ func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Tok
 
 // Delete removes token from ClawVault
 func (s *ClawVaultTokenStore) Delete(ctx context.Context, userID string) error {
-	key := fmt.Sprintf("%s/%s", s.prefix, userID)
+	key := fmt.Sprintf("%s/%s", s.prefix, sanitizeUserID(userID))
 
 	if err := s.client.DeleteSecret(ctx, key); err != nil {
 		return fmt.Errorf("delete secret: %w", err)

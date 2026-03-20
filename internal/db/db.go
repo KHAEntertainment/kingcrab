@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 
 	_ "github.com/lib/pq"
 )
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
 // Config holds database connection configuration
 type Config struct {
@@ -64,7 +68,7 @@ func NewConnectionFromEnv() (*Connection, error) {
 		User:     getEnv("KINGCRAB_DB_USER", "kingcrab"),
 		Password: os.Getenv("KINGCRAB_DB_PASSWORD"),
 		DBName:   getEnv("KINGCRAB_DB_NAME", "kingcrab"),
-		SSLMode:  getEnv("KINGCRAB_DB_SSLMODE", "disable"),
+		SSLMode:  getEnv("KINGCRAB_DB_SSLMODE", "require"), // Production should use encrypted connections; override via KINGCRAB_DB_SSLMODE
 	}
 
 	if cfg.Password == "" {
@@ -101,14 +105,10 @@ func (c *Connection) Close() error {
 
 // RunMigrations runs the database migrations from the SQL file
 func (c *Connection) RunMigrations(ctx context.Context) error {
-	// Find the migrations directory relative to this file
-	// This works in both development and deployed environments
-	migrationsPath := filepath.Join("internal", "db", "migrations", "001_pam_schema.sql")
-
-	// Read the migration SQL file
-	sqlBytes, err := os.ReadFile(migrationsPath)
+	// Read the migration SQL file from embedded filesystem
+	sqlBytes, err := migrationsFS.ReadFile("migrations/001_pam_schema.sql")
 	if err != nil {
-		return fmt.Errorf("read migration file: %w", err)
+		return fmt.Errorf("read embedded migration: %w", err)
 	}
 
 	sqlContent := string(sqlBytes)
