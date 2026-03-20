@@ -249,7 +249,6 @@ func hexDecode(s string) ([]byte, error) {
 // Compile-time check that stores implement TokenStore interface
 var (
 	_ TokenStore = (*LocalEncryptedTokenStore)(nil)
-	_ TokenStore = (*ClawVaultTokenStore)(nil)
 )
 
 // InitLocalTokenStore initializes local store with encryption key from env
