@@ -207,7 +207,7 @@ func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID 
 
 // GetAuthorizedUsers returns all authorized users
 func (s *DBRequestStore) GetAuthorizedUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, display_name FROM authorized_users WHERE is_active = true AND telegram_id IS NOT NULL AND display_name IS NOT NULL")
+	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, COALESCE(display_name, '') AS display_name FROM authorized_users WHERE is_active = true AND telegram_id IS NOT NULL")
 	if err != nil {
 		return nil, err
 	}
