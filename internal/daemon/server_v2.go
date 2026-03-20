@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,6 +42,9 @@ type ServerV2 struct {
 // The function uses a SQLite-backed in-memory request store for the daemon's request queue,
 // initializes PAM from cfg.PAM, creates a command executor using cfg.AllowedCommands,
 // and configures an OpenClaw notifier when enabled.
+// When cfg.Database is non-nil and has a Host set, NewServerV2 attempts to open a
+// PostgreSQL connection using newConnectionFromConfig; a failure is logged as a warning
+// and the daemon continues without a database connection.
 // It returns an initialized *ServerV2 on success. Errors are returned if the function
 // fails to initialize PAM or the request store.
 func NewServerV2(cfg *config.Config) (*ServerV2, error) {
@@ -48,9 +52,25 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	// The daemon uses a local SQLite/in-memory store for its request queue
 	store := pam.NewInMemoryRequestStore()
 
-	// Note: External database connection is intentionally not created here
-	// The daemon's request queue uses SQLite/in-memory storage only
+	// Connect to external database when cfg.Database is configured.
+	// The installer writes KINGCRAB_DB_* env vars which are now picked up by
+	// config.Load via applyDatabaseEnvOverrides, so cfg.Database reflects both
+	// the JSON config file and the installer's systemd environment variables.
 	var database *db.Connection = nil
+	if cfg.Database != nil && cfg.Database.Host != "" {
+		conn, err := newConnectionFromConfig(cfg.Database)
+		if err != nil {
+			logger.Warn("Database connection failed, continuing without database", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else {
+			database = conn
+			logger.Info("Database connection established", map[string]interface{}{
+				"host":   cfg.Database.Host,
+				"dbname": cfg.Database.DBName,
+			})
+		}
+	}
 
 	// Create PAM module
 	p, err := pam.NewPAM(cfg.PAM)
@@ -312,6 +332,43 @@ func (s *ServerV2) performCleanup(ctx context.Context) {
 	} else {
 		logger.Info("No expired requests found", nil)
 	}
+}
+
+// newConnectionFromConfig creates a db.Connection from a config.DatabaseConfig.
+// The password is resolved by reading the environment variable named by
+// cfg.PasswordEnv (e.g. "KINGCRAB_DB_PASSWORD"). When that variable is empty
+// or unset, the function falls back to the file /etc/kingcrab/db.password.
+func newConnectionFromConfig(cfg *config.DatabaseConfig) (*db.Connection, error) {
+	password := ""
+	if cfg.PasswordEnv != "" {
+		password = os.Getenv(cfg.PasswordEnv)
+	}
+	if password == "" {
+		if data, err := os.ReadFile("/etc/kingcrab/db.password"); err == nil {
+			password = strings.TrimSpace(string(data))
+		} else if !os.IsNotExist(err) {
+			logger.Warn("Could not read /etc/kingcrab/db.password", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+	if password == "" {
+		envName := cfg.PasswordEnv
+		if envName == "" {
+			envName = "KINGCRAB_DB_PASSWORD"
+		}
+		return nil, fmt.Errorf("database password not available: set %s or write to /etc/kingcrab/db.password", envName)
+	}
+
+	dbCfg := db.Config{
+		Host:     cfg.Host,
+		Port:     cfg.Port,
+		User:     cfg.User,
+		Password: password,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.SSLMode,
+	}
+	return db.NewConnection(dbCfg)
 }
 
 // Handle signals for graceful shutdown

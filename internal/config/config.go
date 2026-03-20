@@ -147,6 +147,7 @@ func DefaultConfig() *Config {
 // If the file exists, it parses JSON into the default config and returns an error
 // if reading or unmarshalling fails.
 // Environment variable KINGCRAB_PORT, when set to an integer 1–65535, overrides cfg.Port.
+// KINGCRAB_DB_* variables override the database section (see applyDatabaseEnvOverrides).
 // If cfg.SocketPath is empty after loading and cfg.Listen.Path is set, cfg.SocketPath
 // is set to cfg.Listen.Path.
 func Load(path string) (*Config, error) {
@@ -155,6 +156,7 @@ func Load(path string) (*Config, error) {
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// Config file doesn't exist, return defaults
+		applyDatabaseEnvOverrides(cfg)
 		return cfg, nil
 	}
 
@@ -176,10 +178,58 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	// Apply KINGCRAB_DB_* env overrides so the installer's systemd environment
+	// variables are reflected in cfg.Database at runtime.
+	applyDatabaseEnvOverrides(cfg)
+
 	// Ensure socket path is set
 	if cfg.SocketPath == "" && cfg.Listen.Path != "" {
 		cfg.SocketPath = cfg.Listen.Path
 	}
 
 	return cfg, nil
+}
+
+// applyDatabaseEnvOverrides populates cfg.Database from KINGCRAB_DB_* environment
+// variables. When any of those variables are set, cfg.Database is created if nil.
+// Existing non-empty JSON values are not overwritten, so the config file takes
+// precedence over environment variables for any field that is already set.
+// The one exception is PasswordEnv: if KINGCRAB_DB_PASSWORD is present in the
+// environment and PasswordEnv is still empty, it is defaulted to "KINGCRAB_DB_PASSWORD".
+func applyDatabaseEnvOverrides(cfg *Config) {
+	host := os.Getenv("KINGCRAB_DB_HOST")
+	portStr := os.Getenv("KINGCRAB_DB_PORT")
+	user := os.Getenv("KINGCRAB_DB_USER")
+	password := os.Getenv("KINGCRAB_DB_PASSWORD")
+	dbname := os.Getenv("KINGCRAB_DB_NAME")
+	sslmode := os.Getenv("KINGCRAB_DB_SSLMODE")
+
+	hasAny := host != "" || portStr != "" || user != "" || password != "" || dbname != "" || sslmode != ""
+	if !hasAny {
+		return
+	}
+
+	if cfg.Database == nil {
+		cfg.Database = &DatabaseConfig{}
+	}
+	if host != "" && cfg.Database.Host == "" {
+		cfg.Database.Host = host
+	}
+	if portStr != "" && cfg.Database.Port == 0 {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 && p < 65536 {
+			cfg.Database.Port = p
+		}
+	}
+	if user != "" && cfg.Database.User == "" {
+		cfg.Database.User = user
+	}
+	if password != "" && cfg.Database.PasswordEnv == "" {
+		cfg.Database.PasswordEnv = "KINGCRAB_DB_PASSWORD"
+	}
+	if dbname != "" && cfg.Database.DBName == "" {
+		cfg.Database.DBName = dbname
+	}
+	if sslmode != "" && cfg.Database.SSLMode == "" {
+		cfg.Database.SSLMode = sslmode
+	}
 }
