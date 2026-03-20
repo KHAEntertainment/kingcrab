@@ -6,8 +6,10 @@
  * Version: 0.1.0
  */
 
-import { Plugin, PluginConfig, HTTPClient } from '@openclaw/plugin-core';
+import { Plugin, PluginConfig, HTTPClient } from './plugin-core.js';
 import { z } from 'zod';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
 
 // ============================================================================
 // Types & Schemas
@@ -132,8 +134,10 @@ class KingCrabPlugin extends Plugin {
       }
 
       // Check against allowlist
-      const isAllowed = this.config.allowedCommands.some(pattern => {
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+      const isAllowed = this.config.allowedCommands.some((pattern: string) => {
+        // Escape regex special characters except *, then convert * to .*
+        const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+        const regex = new RegExp('^' + escaped + '$');
         return regex.test(command);
       });
 
@@ -284,8 +288,8 @@ class KingCrabPlugin extends Plugin {
       switch (subCommand) {
         case 'request':
           // Usage: /kc request <command> [--reason <reason>]
-          const command = args[0];
           const reasonIndex = args.indexOf('--reason');
+          const command = reasonIndex !== -1 ? args.slice(0, reasonIndex).join(' ') : args.join(' ');
           const reason = reasonIndex !== -1 ? args.slice(reasonIndex + 1).join(' ') : '';
 
           if (!command) {
@@ -401,7 +405,9 @@ ${pending
   // ==========================================================================
 
   getUIPath(): string {
-    return __dirname + '/ui.html';
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    return resolve(__dirname, 'ui.html');
   }
 }
 

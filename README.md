@@ -13,7 +13,7 @@ KingCrab provides secure, chat-based approval workflows for elevated commands. I
 
 ## Architecture
 
-```
+```text
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │   Agent     │────▶│   Skill     │────▶│   Daemon    │
 │ (OpenClaw)  │     │  (Python)   │     │   (Go)      │
@@ -83,7 +83,7 @@ Edit `/etc/kingcrab/config.json`:
   "autoApproveTimeout": 0,
   "telegram": {
     "botToken": "YOUR_BOT_TOKEN",
-    "allowedUsers": ["YOUR_TELEGRAM_USER_ID"]
+    "allowedUsers": [123456789]
   }
 }
 ```
@@ -103,7 +103,7 @@ curl http://localhost:8080/health
 ### Agent Workflow
 
 1. Agent needs elevated access:
-   ```
+   ```text
    /kc request "sudo apt install golang-go" --reason "Need Go for building CLI"
    ```
 
@@ -149,7 +149,7 @@ curl http://localhost:8080/health
 
 ### Project Structure
 
-```
+```text
 kingcrab/
 ├── cmd/kingcrab/     # Daemon entrypoint
 ├── internal/

@@ -2,6 +2,7 @@ package pam
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,19 +20,21 @@ type RequestStore interface {
 
 // ElevationRequest represents an elevation request
 type ElevationRequest struct {
-	ID           string    `json:"id"`
-	Command      string    `json:"command"`
-	Reason       string    `json:"reason"`
-	Requester    string    `json:"requester"`
-	TargetSystem string    `json:"target_system"`
-	Status       string    `json:"status"` // pending/approved/denied/expired
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	ApprovedBy   string    `json:"approved_by,omitempty"`
+	ID           string     `json:"id"`
+	Command      string     `json:"command"`
+	Reason       string     `json:"reason"`
+	Requester    string     `json:"requester"`
+	TargetSystem string     `json:"target_system"`
+	Status       string     `json:"status"` // pending/approved/denied/expired
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	ApprovedBy   string     `json:"approved_by,omitempty"`
 	ApprovedAt   *time.Time `json:"approved_at,omitempty"`
-	NotifyChatID int64     `json:"notify_chat_id"`
-	IPAddress    string    `json:"ip_address,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
+	NotifyChatID int64      `json:"notify_chat_id"`
+	IPAddress    string     `json:"ip_address,omitempty"`
+	UserAgent    string     `json:"user_agent,omitempty"`
+	Output       *string    `json:"output,omitempty"`
+	ExitCode     *int       `json:"exit_code,omitempty"`
 }
 
 // NewElevationRequest creates a new elevation request
@@ -49,8 +52,47 @@ func NewElevationRequest(command, reason, requester, targetSystem string, ttl ti
 	}
 }
 
+// deepCopyElevationRequest creates a deep copy of an ElevationRequest
+func deepCopyElevationRequest(req *ElevationRequest) *ElevationRequest {
+	if req == nil {
+		return nil
+	}
+
+	copy := &ElevationRequest{
+		ID:           req.ID,
+		Command:      req.Command,
+		Reason:       req.Reason,
+		Requester:    req.Requester,
+		TargetSystem: req.TargetSystem,
+		Status:       req.Status,
+		CreatedAt:    req.CreatedAt,
+		ExpiresAt:    req.ExpiresAt,
+		ApprovedBy:   req.ApprovedBy,
+		NotifyChatID: req.NotifyChatID,
+		IPAddress:    req.IPAddress,
+		UserAgent:    req.UserAgent,
+	}
+
+	// Copy pointer fields
+	if req.ApprovedAt != nil {
+		approvedAt := *req.ApprovedAt
+		copy.ApprovedAt = &approvedAt
+	}
+	if req.Output != nil {
+		output := *req.Output
+		copy.Output = &output
+	}
+	if req.ExitCode != nil {
+		exitCode := *req.ExitCode
+		copy.ExitCode = &exitCode
+	}
+
+	return copy
+}
+
 // InMemoryRequestStore is a simple in-memory implementation for development
 type InMemoryRequestStore struct {
+	mu       sync.RWMutex
 	requests map[string]*ElevationRequest
 }
 
@@ -63,23 +105,35 @@ func NewInMemoryRequestStore() *InMemoryRequestStore {
 
 // Create adds a new request
 func (s *InMemoryRequestStore) Create(ctx context.Context, req *ElevationRequest) error {
-	s.requests[req.ID] = req
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Store a deep copy to prevent caller mutations
+	s.requests[req.ID] = deepCopyElevationRequest(req)
 	return nil
 }
 
 // Get retrieves a request by ID
 func (s *InMemoryRequestStore) Get(ctx context.Context, id string) (*ElevationRequest, error) {
-	return s.requests[id], nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	// Return a deep copy to prevent caller mutations
+	return deepCopyElevationRequest(s.requests[id]), nil
 }
 
 // Update modifies an existing request
 func (s *InMemoryRequestStore) Update(ctx context.Context, req *ElevationRequest) error {
-	s.requests[req.ID] = req
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Store a deep copy to prevent caller mutations
+	s.requests[req.ID] = deepCopyElevationRequest(req)
 	return nil
 }
 
 // UpdateStateIf atomically updates state only if current state matches expected
 func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	req, exists := s.requests[id]
 	if !exists {
 		return false, nil
@@ -89,24 +143,42 @@ func (s *InMemoryRequestStore) UpdateStateIf(ctx context.Context, id string, exp
 		return false, nil
 	}
 
-	// Perform state transition
-	req.Status = newState
-	if approvedBy != "" {
-		req.ApprovedBy = approvedBy
-		now := time.Now()
-		req.ApprovedAt = &now
+	// Reject expired requests - cannot approve/deny expired requests
+	if time.Now().After(req.ExpiresAt) {
+		return false, nil
 	}
 
-	s.requests[id] = req
+	// Make a deep copy for mutation to avoid modifying the stored instance
+	reqCopy := deepCopyElevationRequest(req)
+
+	// Perform state transition
+	reqCopy.Status = newState
+
+	// Only set approval metadata when transitioning to "approved" state
+	if newState == "approved" && approvedBy != "" {
+		reqCopy.ApprovedBy = approvedBy
+		now := time.Now()
+		reqCopy.ApprovedAt = &now
+	} else {
+		// Clear approval metadata for non-approved states
+		reqCopy.ApprovedBy = ""
+		reqCopy.ApprovedAt = nil
+	}
+
+	s.requests[id] = reqCopy
 	return true, nil
 }
 
 // ListPending returns all pending requests
 func (s *InMemoryRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	var result []*ElevationRequest
 	for _, req := range s.requests {
 		if req.Status == "pending" && time.Now().Before(req.ExpiresAt) {
-			result = append(result, req)
+			// Return deep copies to prevent caller mutations
+			result = append(result, deepCopyElevationRequest(req))
 		}
 	}
 	return result, nil
@@ -114,6 +186,8 @@ func (s *InMemoryRequestStore) ListPending(ctx context.Context) ([]*ElevationReq
 
 // Delete removes a request
 func (s *InMemoryRequestStore) Delete(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.requests, id)
 	return nil
 }

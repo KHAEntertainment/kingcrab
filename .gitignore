@@ -20,6 +20,9 @@ venv/
 *.swp
 *.swo
 
+# Backups
+*.bak
+
 # OS
 .DS_Store
 Thumbs.db

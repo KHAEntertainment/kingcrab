@@ -6,29 +6,58 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ==================== HTTP Handlers ====================
 
 // Handler handles PAM HTTP requests
 type Handler struct {
-	pam           *PAM
-	botToken      string
-	allowedUsers  []User
-	requestTTL    time.Duration
-	notifyWebhook string // URL to call on approval
+	pam             *PAM
+	requestStore    RequestStore
+	botToken        string
+	allowedUsers    []User
+	allowedCommands []string
+	requestTTL      time.Duration
+	notifyWebhook   string // URL to call on approval
 }
 
 // NewHandler creates a new PAM handler
-func NewHandler(pam *PAM, botToken string, allowedUsers []User, ttlMinutes int) *Handler {
-	return &Handler{
-		pam:          pam,
-		botToken:     botToken,
-		allowedUsers: allowedUsers,
-		requestTTL:   time.Duration(ttlMinutes) * time.Minute,
+func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUsers []User, allowedCommands []string, ttlMinutes int) *Handler {
+	// Keep allowedUsers as-is (don't snapshot from DB)
+	// If nil/empty, authorization will query requestStore on each check
+
+	if ttlMinutes <= 0 {
+		ttlMinutes = 5 // default 5 minutes
 	}
+
+	return &Handler{
+		pam:             pam,
+		requestStore:    requestStore,
+		botToken:        botToken,
+		allowedUsers:    allowedUsers,
+		allowedCommands: allowedCommands,
+		requestTTL:      time.Duration(ttlMinutes) * time.Minute,
+	}
+}
+
+// checkAuthorization verifies the user is authorized, querying requestStore if needed
+func (h *Handler) checkAuthorization(initData *InitData) error {
+	allowedUsers := h.allowedUsers
+
+	// If no static allowedUsers, query from requestStore (DB-backed)
+	if len(allowedUsers) == 0 {
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			users, err := dbStore.GetAuthorizedUsers(ctx)
+			if err != nil || len(users) == 0 {
+				return fmt.Errorf("no authorized users configured")
+			}
+			allowedUsers = users
+		}
+	}
+
+	return CheckAuthorization(initData, allowedUsers)
 }
 
 // Request types
@@ -56,7 +85,21 @@ type ApproveResponse struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
+type DenyRequest struct {
+	InitData        string `json:"initData"`
+	BiometricToken  string `json:"biometric_token"`
+	RequestID       string `json:"request_id"`
+	Reason          string `json:"reason"`
+}
+
+type DenyResponse struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
 type CreateRequestRequest struct {
+	InitData     string `json:"initData"`
 	Command      string `json:"command"`
 	Reason       string `json:"reason"`
 	Requester    string `json:"requester"`
@@ -70,23 +113,6 @@ type CreateRequestResponse struct {
 	Status       string    `json:"status"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	ApprovalURL  string    `json:"approval_url,omitempty"`
-}
-
-// In-memory request store (replace with DB in production)
-var pendingRequests = make(map[string]*PendingRequest)
-
-type PendingRequest struct {
-	ID           string    `json:"id"`
-	Command      string    `json:"command"`
-	Reason       string    `json:"reason"`
-	Requester    string    `json:"requester"`
-	TargetSystem string    `json:"target_system"`
-	Status       string    `json:"status"` // pending/approved/denied/expired
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	ApprovedBy   string    `json:"approved_by,omitempty"`
-	ApprovedAt   *time.Time `json:"approved_at,omitempty"`
-	NotifyChatID int64     `json:"notify_chat_id"`
 }
 
 // ServeHTTP implements http.Handler
@@ -107,13 +133,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleEnroll(w, r)
 	case "/api/pam/approve":
 		h.handleApprove(w, r)
+	case "/api/pam/deny":
+		h.handleDeny(w, r)
 	case "/api/pam/request":
 		h.handleCreateRequest(w, r)
-	case "/api/pam/request/":
-		h.handleGetRequest(w, r)
 	case "/api/pam/health":
 		h.handleHealth(w, r)
 	default:
+		// Check for /api/pam/request/{id} pattern
+		if len(r.URL.Path) > len("/api/pam/request/") && r.URL.Path[:len("/api/pam/request/")] == "/api/pam/request/" {
+			h.handleGetRequest(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }
@@ -138,8 +169,14 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
 	// Check authorization
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -151,7 +188,7 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		DeviceInfo:   req.DeviceInfo,
 		EnrolledAt:   time.Now(),
 		LastUsedAt:   time.Now(),
-		TokenStorage: "local", // or "clawvault" based on PAM config
+		TokenStorage: "local",
 	}
 
 	if err := h.pam.StoreToken(context.Background(), userID, token); err != nil {
@@ -179,6 +216,12 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
 	// Validate initData
 	initData, err := ValidateInitDataFromRequest(req.InitData, h.botToken)
 	if err != nil {
@@ -187,7 +230,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check authorization
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -200,7 +243,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify token matches (in production, would do proper token comparison)
+	// Verify token matches
 	if storedToken.Value != req.BiometricToken {
 		h.respondError(w, http.StatusUnauthorized, "biometric token mismatch")
 		return
@@ -208,28 +251,46 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Update token last used
 	storedToken.LastUsedAt = time.Now()
-	h.pam.StoreToken(context.Background(), userID, *storedToken)
+	if err := h.pam.StoreToken(context.Background(), userID, *storedToken); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update token usage: %v", err))
+		return
+	}
 
-	// Find and update the pending request
-	reqID := req.RequestID
-	pending, ok := pendingRequests[reqID]
-	if !ok {
+	// Find and update the pending request via store
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, req.RequestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		return
+	}
+	if pending == nil {
 		h.respondError(w, http.StatusNotFound, "request not found")
 		return
 	}
 
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
-		pending.Status = "expired"
+		// Try to atomically set to expired if still pending
+		_, err := h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		if err != nil {
+			// Log the error but still return expired response
+			fmt.Printf("failed to mark request %s as expired: %v\n", pending.ID, err)
+		}
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
 
-	// Approve the request
-	now := time.Now()
-	pending.Status = "approved"
-	pending.ApprovedBy = userID
-	pending.ApprovedAt = &now
+	// Atomically approve the request (only if still pending)
+	success, err := h.requestStore.UpdateStateIf(ctx, req.RequestID, "pending", "approved", userID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+		return
+	}
+
+	if !success {
+		h.respondError(w, http.StatusConflict, "request already processed")
+		return
+	}
 
 	// TODO: Trigger actual command execution
 	// TODO: Call notify webhook
@@ -237,7 +298,106 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	h.respond(w, ApproveResponse{
 		Success:   true,
 		Message:   "Elevation request approved",
-		RequestID: reqID,
+		RequestID: req.RequestID,
+	})
+}
+
+// handleDeny handles elevation request denial
+func (h *Handler) handleDeny(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req DenyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate biometric token is not empty
+	if req.BiometricToken == "" {
+		h.respondError(w, http.StatusBadRequest, "biometric token required")
+		return
+	}
+
+	// Validate initData
+	initData, err := ValidateInitDataFromRequest(req.InitData, h.botToken)
+	if err != nil {
+		h.respondError(w, http.StatusUnauthorized, fmt.Sprintf("invalid initData: %v", err))
+		return
+	}
+
+	// Check authorization
+	if err := h.checkAuthorization(initData); err != nil {
+		h.respondError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	// Verify biometric token
+	userID := InitDataToUserID(initData)
+	storedToken, err := h.pam.RetrieveToken(context.Background(), userID)
+	if err != nil || storedToken == nil {
+		h.respondError(w, http.StatusUnauthorized, "no enrolled device found")
+		return
+	}
+
+	// Verify token matches
+	if storedToken.Value != req.BiometricToken {
+		h.respondError(w, http.StatusUnauthorized, "biometric token mismatch")
+		return
+	}
+
+	// Update token last used
+	storedToken.LastUsedAt = time.Now()
+	if err := h.pam.StoreToken(context.Background(), userID, *storedToken); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update token usage: %v", err))
+		return
+	}
+
+	// Find and update the pending request via store
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, req.RequestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("store error: %v", err))
+		return
+	}
+	if pending == nil {
+		h.respondError(w, http.StatusNotFound, "request not found")
+		return
+	}
+
+	// Check expiration
+	if time.Now().After(pending.ExpiresAt) {
+		// Try to atomically set to expired if still pending
+		_, err := h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		if err != nil {
+			// Log the error but still return expired response
+			fmt.Printf("failed to mark request %s as expired: %v\n", pending.ID, err)
+		}
+		h.respondError(w, http.StatusGone, "request expired")
+		return
+	}
+
+	// Atomically deny the request (only if still pending)
+	success, err := h.requestStore.UpdateStateIf(ctx, req.RequestID, "pending", "denied", userID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update request: %v", err))
+		return
+	}
+
+	if !success {
+		h.respondError(w, http.StatusConflict, "request already processed")
+		return
+	}
+
+	// TODO: Audit log the denial with reason
+	// TODO: Call notify webhook
+
+	h.respond(w, DenyResponse{
+		Success:   true,
+		Message:   "Elevation request denied",
+		RequestID: req.RequestID,
 	})
 }
 
@@ -254,33 +414,79 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate command is allowed (would check against allowlist)
-	// For now, accept any command
-
-	requestID := uuid.New().String()
-	expiresAt := time.Now().Add(h.requestTTL)
-
-	pending := &PendingRequest{
-		ID:           requestID,
-		Command:      req.Command,
-		Reason:       req.Reason,
-		Requester:    req.Requester,
-		TargetSystem: req.TargetSystem,
-		Status:       "pending",
-		CreatedAt:    time.Now(),
-		ExpiresAt:    expiresAt,
-		NotifyChatID: req.NotifyChatID,
+	// Authenticate caller via initData
+	initDataHeader := r.Header.Get("X-Telegram-Init-Data")
+	if initDataHeader == "" {
+		// Fallback to JSON field for backwards compatibility
+		initDataHeader = req.InitData
 	}
 
-	pendingRequests[requestID] = pending
+	initData, err := ValidateInitDataFromRequest(initDataHeader, h.botToken)
+	if err != nil {
+		// Log authentication failure for auditing
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx := context.Background()
+			dbStore.LogAudit(ctx, "create_request_denied", nil, nil, nil, r.RemoteAddr, r.UserAgent(), map[string]interface{}{
+				"reason": "invalid_initdata",
+				"error":  err.Error(),
+			})
+		}
+		h.respondError(w, http.StatusUnauthorized, fmt.Sprintf("invalid initData: %v", err))
+		return
+	}
+
+	// Authorize caller
+	if err := h.checkAuthorization(initData); err != nil {
+		// Log authorization failure for auditing
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx := context.Background()
+			userID := int(initData.User.ID)
+			dbStore.LogAudit(ctx, "create_request_denied", nil, nil, &userID, r.RemoteAddr, r.UserAgent(), map[string]interface{}{
+				"reason": "unauthorized",
+				"error":  err.Error(),
+			})
+		}
+		h.respondError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
+	// Validate command is not empty
+	if req.Command == "" {
+		h.respondError(w, http.StatusBadRequest, "command required")
+		return
+	}
+
+	// Validate command against allowlist
+	if !h.isCommandAllowed(req.Command) {
+		h.respondError(w, http.StatusForbidden, "command not in allowlist")
+		return
+	}
+
+	// Use server-validated identity instead of client-supplied requester
+	requester := InitDataToUserID(initData)
+
+	pending := NewElevationRequest(
+		req.Command,
+		req.Reason,
+		requester,
+		req.TargetSystem,
+		h.requestTTL,
+		req.NotifyChatID,
+	)
+
+	ctx := context.Background()
+	if err := h.requestStore.Create(ctx, pending); err != nil {
+		h.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create request: %v", err))
+		return
+	}
 
 	// Build approval URL for Mini App
-	approvalURL := fmt.Sprintf("/approve?request_id=%s", requestID)
+	approvalURL := fmt.Sprintf("/approve?request_id=%s", pending.ID)
 
 	h.respond(w, CreateRequestResponse{
-		RequestID:   requestID,
+		RequestID:   pending.ID,
 		Status:      "pending",
-		ExpiresAt:   expiresAt,
+		ExpiresAt:   pending.ExpiresAt,
 		ApprovalURL: approvalURL,
 	})
 }
@@ -299,9 +505,33 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pending, ok := pendingRequests[requestID]
-	if !ok {
-		http.NotFound(w, r)
+	// Authenticate caller via initData
+	initDataHeader := r.Header.Get("X-Telegram-Init-Data")
+	if initDataHeader == "" {
+		h.respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	initData, err := ValidateInitDataFromRequest(initDataHeader, h.botToken)
+	if err != nil {
+		h.respondError(w, http.StatusUnauthorized, "invalid authentication")
+		return
+	}
+
+	// Authorize caller
+	if err := h.checkAuthorization(initData); err != nil {
+		h.respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	ctx := context.Background()
+	pending, err := h.requestStore.Get(ctx, requestID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "error retrieving request")
+		return
+	}
+	if pending == nil {
+		h.respondError(w, http.StatusNotFound, "request not found")
 		return
 	}
 
@@ -326,6 +556,111 @@ func (h *Handler) respondError(w http.ResponseWriter, code int, message string) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// isCommandAllowed checks if a command matches the allowlist
+func (h *Handler) isCommandAllowed(command string) bool {
+	// If no allowlist configured, reject all (fail closed)
+	if len(h.allowedCommands) == 0 {
+		return false
+	}
+
+	for _, pattern := range h.allowedCommands {
+		if matchCommand(pattern, command) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchCommand checks if a command matches a pattern (* = wildcard)
+// Uses tokenized matching to prevent shell metacharacter injection
+func matchCommand(pattern, command string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if pattern == command {
+		return true
+	}
+
+	// Tokenize pattern and command by whitespace
+	patternTokens := tokenizeCommand(pattern)
+	commandTokens := tokenizeCommand(command)
+
+	if len(patternTokens) == 0 || len(commandTokens) == 0 {
+		return false
+	}
+
+	// Check if last pattern token is a wildcard
+	hasWildcard := false
+	matchTokens := patternTokens
+	if patternTokens[len(patternTokens)-1] == "*" {
+		hasWildcard = true
+		matchTokens = patternTokens[:len(patternTokens)-1]
+	}
+
+	// Command must have at least as many tokens as non-wildcard pattern tokens
+	if len(commandTokens) < len(matchTokens) {
+		return false
+	}
+
+	// If no wildcard, command must match pattern exactly in token count
+	if !hasWildcard && len(commandTokens) != len(matchTokens) {
+		return false
+	}
+
+	// Match all non-wildcard pattern tokens
+	for i, patternToken := range matchTokens {
+		if commandTokens[i] != patternToken {
+			return false
+		}
+	}
+
+	// Reject commands containing shell metacharacters or operators
+	for _, token := range commandTokens {
+		if containsShellMetacharacters(token) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// tokenizeCommand splits a command into whitespace-separated tokens
+func tokenizeCommand(s string) []string {
+	var tokens []string
+	var current []rune
+
+	for _, ch := range s {
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			if len(current) > 0 {
+				tokens = append(tokens, string(current))
+				current = nil
+			}
+		} else {
+			current = append(current, ch)
+		}
+	}
+
+	if len(current) > 0 {
+		tokens = append(tokens, string(current))
+	}
+
+	return tokens
+}
+
+// containsShellMetacharacters checks if a token contains dangerous shell characters
+func containsShellMetacharacters(token string) bool {
+	// Reject tokens containing shell operators and metacharacters
+	dangerousChars := ";|&<>`$(){}[]!*?~"
+	for _, ch := range token {
+		for _, danger := range dangerousChars {
+			if ch == danger {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Compile-time check

@@ -76,30 +76,33 @@ CREATE INDEX IF NOT EXISTS idx_devices_hash ON enrolled_devices(device_hash);
 -- The actual elevation requests
 CREATE TABLE IF NOT EXISTS elevation_requests (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Request details
     requester       VARCHAR(255) NOT NULL,          -- Who requested
     target_system   VARCHAR(255) NOT NULL,          -- Target server/system
     command         TEXT NOT NULL,                  -- Command to execute
     reason          TEXT,                           -- Justification
-    
+
     -- Status tracking
-    status          VARCHAR(20) DEFAULT 'pending' 
+    status          VARCHAR(20) DEFAULT 'pending'
                     CHECK (status IN ('pending', 'approved', 'denied', 'expired', 'executing', 'failed')),
-    
+
     -- Timing
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     expires_at      TIMESTAMP WITH TIME ZONE NOT NULL,
     approved_at     TIMESTAMP WITH TIME ZONE,
     executed_at     TIMESTAMP WITH TIME ZONE,
-    
+
     -- Approval info
-    approved_by     INTEGER REFERENCES enrolled_devices(id),
-    
+    approved_by     TEXT,                     -- User identity string (e.g., "tg:12345")
+
     -- Network info (for audit)
     ip_address      VARCHAR(45),                    -- IPv6 compatible
     user_agent      VARCHAR(512),
-    
+
+    -- Telegram notification
+    notify_chat_id  BIGINT,                         -- Telegram chat ID for notifications
+
     -- Result
     output          TEXT,
     exit_code       INTEGER
@@ -109,6 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON elevation_requests(status);
 CREATE INDEX IF NOT EXISTS idx_requests_created ON elevation_requests(created_at);
 CREATE INDEX IF NOT EXISTS idx_requests_expires ON elevation_requests(expires_at);
 CREATE INDEX IF NOT EXISTS idx_requests_requester ON elevation_requests(requester);
+CREATE INDEX IF NOT EXISTS idx_requests_approved ON elevation_requests(approved_at);
 
 -- ============================================
 -- APPROVAL AUDIT LOG
@@ -167,25 +171,34 @@ CREATE TRIGGER update_users_updated_at
 -- CLEANUP JOBS (run via cron)
 -- ============================================
 
--- Example: Delete expired requests older than 30 days
--- SELECT cleanup_expired_requests(30);
-
-CREATE OR REPLACE FUNCTION cleanup_expired_requests(retention_days INTEGER DEFAULT 30)
+-- Delete old completed requests using approved_at (terminal timestamp)
+CREATE OR REPLACE FUNCTION cleanup_completed_requests(retention_days INTEGER DEFAULT 30)
 RETURNS INTEGER AS $$
 DECLARE
     deleted_count INTEGER;
 BEGIN
     -- Mark expired requests
-    UPDATE elevation_requests 
-    SET status = 'expired' 
-    WHERE status = 'pending' 
-    AND expires_at < NOW();
-    
-    -- Delete old completed requests
-    DELETE FROM elevation_requests 
-    WHERE status IN ('approved', 'denied', 'expired', 'failed')
-    AND created_at < NOW() - (retention_days || ' days')::INTERVAL;
-    
+    UPDATE elevation_requests
+    SET status = 'expired',
+        approved_at = NOW()  -- Set terminal timestamp when transitioning to terminal state
+    WHERE status = 'pending'
+    AND expires_at < NOW()
+    AND approved_at IS NULL;  -- Only update if not already set
+
+    -- Delete old completed requests based on terminal timestamp (approved_at)
+    -- For terminal statuses, approved_at is used as the timestamp when status became terminal
+    -- For denied/failed with NULL approved_at, use created_at as fallback
+    DELETE FROM elevation_requests
+    WHERE (
+        (status IN ('approved', 'denied', 'expired', 'failed')
+         AND approved_at IS NOT NULL
+         AND approved_at < NOW() - (retention_days || ' days')::INTERVAL)
+        OR
+        (status IN ('denied', 'failed')
+         AND approved_at IS NULL
+         AND created_at < NOW() - (retention_days || ' days')::INTERVAL)
+    );
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

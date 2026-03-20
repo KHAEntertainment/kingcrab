@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -14,11 +15,11 @@ import (
 
 // InitData represents parsed Telegram initData
 type InitData struct {
-	QueryID     string    `json:"query_id"`
-	User        *TGUser   `json:"user"`
-	AuthDate    time.Time `json:"auth_date"`
-	Hash        string    `json:"hash"`
-	Raw         string    `json:"raw"` // Original query string
+	QueryID    string    `json:"query_id"`
+	User       *TGUser   `json:"user"`
+	AuthDate   time.Time `json:"auth_date"`
+	Hash       string    `json:"hash"`
+	Raw        string    `json:"raw"` // Original query string
 }
 
 // TGUser represents a Telegram user from initData
@@ -61,8 +62,22 @@ func ValidateInitData(initDataString, botToken string, maxAge time.Duration) (*I
 	}
 
 	authDate := time.Unix(authDateUnix, 0)
-	if maxAge > 0 && time.Since(authDate) > maxAge {
-		return nil, fmt.Errorf("initData expired (age: %v, max: %v)", time.Since(authDate), maxAge)
+
+	// Check timestamp validity with clock skew tolerance
+	now := time.Now()
+	const clockSkew = 5 * time.Minute
+
+	// Reject future-dated auth_date (beyond clock skew tolerance)
+	if authDate.After(now.Add(clockSkew)) {
+		return nil, fmt.Errorf("auth_date is in the future (possible clock skew or replay attack)")
+	}
+
+	// Check expiration using consistent now value
+	if maxAge > 0 {
+		age := now.Sub(authDate)
+		if age > maxAge {
+			return nil, fmt.Errorf("initData expired (age: %v, max: %v)", age, maxAge)
+		}
 	}
 
 	// Extract user data
@@ -77,18 +92,23 @@ func ValidateInitData(initDataString, botToken string, maxAge time.Duration) (*I
 	// Build data check string (all params except hash, sorted by key)
 	dataCheckString := buildDataCheckString(params)
 
-	// Validate hash
-	expectedHash := computeHMACSHA256(dataCheckString, botToken)
+	// Derive secret key: HMAC-SHA256(key="WebAppData", message=botToken)
+	// Per Telegram spec: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+	secretKey := computeHMACSHA256Bytes([]byte(botToken), []byte("WebAppData"))
+
+	// Validate hash using derived secret
+	expectedHashBytes := computeHMACSHA256Bytes([]byte(dataCheckString), secretKey)
+	expectedHash := hex.EncodeToString(expectedHashBytes)
 	if !hmac.Equal([]byte(expectedHash), []byte(hash)) {
 		return nil, fmt.Errorf("invalid hash (possible spoofing attempt)")
 	}
 
 	return &InitData{
-		QueryID:   params.Get("query_id"),
-		User:      user,
-		AuthDate:  authDate,
-		Hash:      hash,
-		Raw:       initDataString,
+		QueryID: params.Get("query_id"),
+		User:    user,
+		AuthDate: authDate,
+		Hash:    hash,
+		Raw:     initDataString,
 	}, nil
 }
 
@@ -100,25 +120,17 @@ func parseUser(userData string) (*TGUser, error) {
 		return nil, err
 	}
 
-	// Simple JSON parse - in production use json.Unmarshal
-	// For now, extract fields with basic string manipulation
-	// This is a simplified version
-	var user TGUser
-	_ = user // suppress unused warning; would be populated in production
-
-	// Check for required fields
 	if decoded == "" {
 		return nil, fmt.Errorf("empty user data")
 	}
 
-	// Use JSON unmarshaling
-	// In production: json.NewDecoder(strings.NewReader(decoded)).Decode(&user)
+	// Parse JSON
+	var user TGUser
+	if err := json.Unmarshal([]byte(decoded), &user); err != nil {
+		return nil, fmt.Errorf("parse user JSON: %w", err)
+	}
 
-	// For now, return a minimal user
-	return &TGUser{
-		ID:        0, // Would be parsed from JSON
-		FirstName: "Unknown",
-	}, nil
+	return &user, nil
 }
 
 // buildDataCheckString creates the data check string per Telegram spec
@@ -143,15 +155,21 @@ func buildDataCheckString(params url.Values) string {
 	return strings.Join(parts, "\n")
 }
 
-// computeHMACSHA256 computes HMAC-SHA256
-func computeHMACSHA256(data, secret string) string {
-	h := hmac.New(sha256.New, []byte(secret))
+// computeHMACSHA256Bytes computes HMAC-SHA256 and returns raw bytes
+func computeHMACSHA256Bytes(data, key []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// computeHMACSHA256 computes HMAC-SHA256 with data as message and key as secret
+func computeHMACSHA256(data, key string) string {
+	h := hmac.New(sha256.New, []byte(key))
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ValidateInitDataFromRequest validates initData from HTTP request
-// Convenience function that extracts from query string or header
 func ValidateInitDataFromRequest(initData string, botToken string) (*InitData, error) {
 	// Default max age: 24 hours (Telegram recommendation)
 	return ValidateInitData(initData, botToken, 24*time.Hour)
@@ -180,15 +198,14 @@ func IsAuthorizedUser(initData *InitData, allowedUsers []User) bool {
 	return false
 }
 
-// Example allowed users (would come from config)
-var defaultAllowedUsers = []User{
-	{TelegramID: 6778651323, Name: "Billy"},
-}
-
-// CheckAuthorization is a convenience function
 func CheckAuthorization(initData *InitData, allowedUsers []User) error {
+	if initData == nil || initData.User == nil {
+		return fmt.Errorf("missing user data in initData")
+	}
+
+	// Fail closed: no allowed users = no access
 	if len(allowedUsers) == 0 {
-		allowedUsers = defaultAllowedUsers
+		return fmt.Errorf("no authorized users configured")
 	}
 
 	if !IsAuthorizedUser(initData, allowedUsers) {

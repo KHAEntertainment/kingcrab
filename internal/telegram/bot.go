@@ -1,0 +1,276 @@
+package telegram
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+// Bot represents a Telegram bot
+type Bot struct {
+	token       string
+	httpClient  *http.Client
+	webhookURL  string
+	miniAppURL  string
+}
+
+// NewBot creates a new Telegram bot
+func NewBot(token, webhookURL, miniAppURL string) *Bot {
+	return &Bot{
+		token:      token,
+		webhookURL: webhookURL,
+		miniAppURL: miniAppURL,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// SendMessage sends a message with inline keyboard
+func (b *Bot) SendMessage(ctx context.Context, chatID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+
+	return b.sendRequest(ctx, "sendMessage", payload)
+}
+
+// EditMessageText edits an existing message
+func (b *Bot) EditMessageText(ctx context.Context, chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) error {
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+
+	return b.sendRequest(ctx, "editMessageText", payload)
+}
+
+// AnswerCallbackQuery answers a callback query
+func (b *Bot) AnswerCallbackQuery(ctx context.Context, callbackID string, text string, showAlert bool) error {
+	payload := map[string]interface{}{
+		"callback_query_id": callbackID,
+		"text":             text,
+		"show_alert":       showAlert,
+	}
+
+	return b.sendRequest(ctx, "answerCallbackQuery", payload)
+}
+
+// SetWebhook sets the webhook for the bot
+func (b *Bot) SetWebhook(ctx context.Context, url string) error {
+	payload := map[string]interface{}{
+		"url":                   url,
+		"drop_pending_updates":  false,
+	}
+
+	return b.sendRequest(ctx, "setWebhook", payload)
+}
+
+// DeleteWebhook removes the webhook
+func (b *Bot) DeleteWebhook(ctx context.Context) error {
+	return b.sendRequest(ctx, "deleteWebhook", nil)
+}
+
+// BuildApprovalKeyboard creates an inline keyboard for PAM approval
+func (b *Bot) BuildApprovalKeyboard(requestID string) *InlineKeyboardMarkup {
+	approvalURL := b.miniAppURL
+	if !strings.HasSuffix(approvalURL, "/") {
+		approvalURL += "/"
+	}
+	approvalURL += fmt.Sprintf("pam.html?request_id=%s", requestID)
+
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{
+					Text:   "🔐 Authenticate & Approve",
+					WebApp: &WebAppInfo{URL: approvalURL},
+					Type:   "webapp",
+				},
+			},
+			{
+				{
+					Text:        "❌ Deny",
+					CallbackData: fmt.Sprintf("deny_%s", requestID),
+					Type:        "callback",
+				},
+			},
+		},
+	}
+}
+
+// BuildApprovalMessage creates the approval request message
+func (b *Bot) BuildApprovalMessage(req *ElevationRequest) string {
+	text := fmt.Sprintf(`<b>🔐 Elevation Request</b>
+
+<b>Target:</b> %s
+<b>Requester:</b> %s
+<b>Command:</b>
+<pre>%s</pre>
+<b>Reason:</b> %s
+
+⏱️ Expires: %s`,
+		escapeHTML(req.TargetSystem),
+		escapeHTML(req.Requester),
+		escapeHTML(req.Command),
+		escapeHTML(req.Reason),
+		req.ExpiresAt.Format("15:04 MST"),
+	)
+
+	return text
+}
+
+// BuildApprovalResultMessage creates the result message after approval/denial
+func (b *Bot) BuildApprovalResultMessage(req *ElevationRequest, approved bool, approver string) string {
+	var emoji, text string
+
+	if approved {
+		emoji = "✅"
+		text = fmt.Sprintf(`%s <b>Approved</b>
+
+<b>Target:</b> %s
+<b>Command:</b>
+<pre>%s</pre>
+<b>By:</b> %s
+<b>Time:</b> %s`,
+			emoji,
+			escapeHTML(req.TargetSystem),
+			escapeHTML(req.Command),
+			escapeHTML(approver),
+			time.Now().Format("15:04 MST"),
+		)
+	} else {
+		emoji = "🚫"
+		text = fmt.Sprintf(`%s <b>Denied</b>
+
+<b>Target:</b> %s
+<b>Command:</b>
+<pre>%s</pre>
+<b>Time:</b> %s`,
+			emoji,
+			escapeHTML(req.TargetSystem),
+			escapeHTML(req.Command),
+			time.Now().Format("15:04 MST"),
+		)
+	}
+
+	return text
+}
+
+// sendRequest makes an API request to Telegram
+func (b *Bot) sendRequest(ctx context.Context, method string, payload map[string]interface{}) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", b.token, method)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
+	}
+
+	// Parse response
+	var result APIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if !result.Ok {
+		return fmt.Errorf("API error: %d - %s", result.ErrorCode, result.Description)
+	}
+
+	return nil
+}
+
+// escapeHTML escapes HTML special characters
+func escapeHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	return s
+}
+
+// ==================== Types ====================
+
+// InlineKeyboardMarkup represents an inline keyboard
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+// InlineKeyboardButton represents a button
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	WebApp       *WebAppInfo `json:"web_app,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
+	Type         string `json:"-"` // "url" or "callback" (not sent to API)
+}
+
+// WebAppInfo represents Telegram Web App URL
+type WebAppInfo struct {
+	URL string `json:"url"`
+}
+
+// APIResponse represents a Telegram API response
+type APIResponse struct {
+	Ok          bool                   `json:"ok"`
+	ErrorCode   int                    `json:"error_code,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Result      json.RawMessage       `json:"result,omitempty"`
+}
+
+// ElevationRequest represents an elevation request (for bot messaging)
+type ElevationRequest struct {
+	ID           string    `json:"id"`
+	TargetSystem string    `json:"target_system"`
+	Command      string    `json:"command"`
+	Reason       string    `json:"reason"`
+	Requester    string    `json:"requester"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+// NewBotFromEnv creates a bot from environment variables
+func NewBotFromEnv() *Bot {
+	token := os.Getenv("KINGCRAB_TELEGRAM_BOT_TOKEN")
+	if token == "" {
+		return nil
+	}
+
+	webhookURL := os.Getenv("KINGCRAB_TELEGRAM_WEBHOOK_URL")
+	miniAppURL := os.Getenv("KINGCRAB_TELEGRAM_MINIAPP_URL")
+
+	return NewBot(token, webhookURL, miniAppURL)
+}

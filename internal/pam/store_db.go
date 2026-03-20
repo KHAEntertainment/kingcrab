@@ -23,7 +23,7 @@ func NewDBRequestStore(db *sql.DB) *DBRequestStore {
 // Create inserts a new request
 func (s *DBRequestStore) Create(ctx context.Context, req *ElevationRequest) error {
 	query := `
-		INSERT INTO elevation_requests 
+		INSERT INTO elevation_requests
 		(id, requester, target_system, command, reason, status, created_at, expires_at, ip_address, user_agent, notify_chat_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
@@ -37,8 +37,8 @@ func (s *DBRequestStore) Create(ctx context.Context, req *ElevationRequest) erro
 // Get retrieves a request by ID
 func (s *DBRequestStore) Get(ctx context.Context, id string) (*ElevationRequest, error) {
 	query := `
-		SELECT id, requester, target_system, command, reason, status, 
-		       created_at, expires_at, approved_by, approved_at, 
+		SELECT id, requester, target_system, command, reason, status,
+		       created_at, expires_at, approved_by, approved_at,
 		       ip_address, user_agent, notify_chat_id
 		FROM elevation_requests WHERE id = $1
 	`
@@ -79,8 +79,7 @@ func (s *DBRequestStore) Update(ctx context.Context, req *ElevationRequest) erro
 			exit_code = $6
 		WHERE id = $1
 	`
-	var approvedBy, output *string
-	var exitCode *int
+	var approvedBy *string
 	var approvedAt *time.Time
 
 	if req.ApprovedBy != "" {
@@ -90,24 +89,66 @@ func (s *DBRequestStore) Update(ctx context.Context, req *ElevationRequest) erro
 		approvedAt = req.ApprovedAt
 	}
 
+	output := req.Output
+	exitCode := req.ExitCode
+
 	_, err := s.db.ExecContext(ctx, query, req.ID, req.Status, approvedBy, approvedAt, output, exitCode)
 	return err
 }
 
 // UpdateStateIf atomically updates state only if current state matches expected
 func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
-	query := `
-		UPDATE elevation_requests
-		SET status = $2, approved_by = $3, approved_at = NOW()
-		WHERE id = $1 AND status = $4
-	`
+	var query string
+	var result sql.Result
+	var err error
 
-	var approvedByPtr *string
-	if approvedBy != "" {
-		approvedByPtr = &approvedBy
+	// Only set approval metadata when transitioning to "approved" state
+	if newState == "approved" {
+		// Also reject expired requests in the same transaction
+		query = `
+			UPDATE elevation_requests
+			SET status = $2, approved_by = $3, approved_at = NOW()
+			WHERE id = $1 AND status = $4 AND expires_at > NOW()
+		`
+		var approvedByPtr *string
+		if approvedBy != "" {
+			approvedByPtr = &approvedBy
+		}
+		result, err = s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
+	} else if newState == "expired" {
+		// Handle expiration separately: update to expired WITHOUT requiring expires_at > NOW()
+		// Do NOT set approved_by or approved_at for expired state
+		query = `
+			UPDATE elevation_requests
+			SET status = $2
+			WHERE id = $1 AND status = $3
+		`
+		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState)
+	} else if newState == "denied" || newState == "failed" {
+		// For terminal denial/failure states, record the denier/actor in approved_by
+		// and set approved_at to NOW() for cleanup eligibility
+		// Also reject expired requests in the same transaction
+		query = `
+			UPDATE elevation_requests
+			SET status = $2, approved_by = $4, approved_at = NOW()
+			WHERE id = $1 AND status = $3 AND expires_at > NOW()
+		`
+		var approvedByPtr *string
+		if approvedBy != "" {
+			approvedByPtr = &approvedBy
+		}
+		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState, approvedByPtr)
+	} else {
+		// For non-terminal states (e.g., "executing"), only update status
+		// Do NOT touch approved_by or approved_at
+		query = `
+			UPDATE elevation_requests
+			SET status = $2
+			WHERE id = $1 AND status = $3
+		`
+		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState)
 	}
 
-	result, err := s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
 	if err != nil {
 		return false, err
 	}
@@ -123,10 +164,10 @@ func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedS
 // ListPending returns all pending requests
 func (s *DBRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, error) {
 	query := `
-		SELECT id, requester, target_system, command, reason, status, 
-		       created_at, expires_at, approved_by, approved_at, 
+		SELECT id, requester, target_system, command, reason, status,
+		       created_at, expires_at, approved_by, approved_at,
 		       ip_address, user_agent, notify_chat_id
-		FROM elevation_requests 
+		FROM elevation_requests
 		WHERE status = 'pending' AND expires_at > NOW()
 		ORDER BY created_at DESC
 	`
@@ -170,21 +211,6 @@ func (s *DBRequestStore) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-// UpdateStateIf atomically updates request state only if it matches expected state
-func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error) {
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE elevation_requests SET status = $1, approved_by = $2, approved_at = NOW() WHERE id = $3 AND status = $4",
-		newState, approvedBy, id, expectedState)
-	if err != nil {
-		return false, err
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return rowsAffected > 0, nil
-}
-
 // LogAudit logs an approval action
 func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID *string, deviceID *int, userID *int, ipAddress, userAgent string, details map[string]interface{}) error {
 	detailsJSON, err := json.Marshal(details)
@@ -203,7 +229,7 @@ func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID 
 
 // GetAuthorizedUsers returns all authorized users
 func (s *DBRequestStore) GetAuthorizedUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, display_name FROM authorized_users WHERE is_active = true")
+	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, COALESCE(display_name, '') AS display_name FROM authorized_users WHERE is_active = true AND telegram_id IS NOT NULL")
 	if err != nil {
 		return nil, err
 	}

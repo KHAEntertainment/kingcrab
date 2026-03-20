@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -81,9 +83,7 @@ type ClawVaultStatus struct {
 // NewPAM creates a new PAM instance
 func NewPAM(config *PAMConfig) (*PAM, error) {
 	if config == nil {
-		config = &PAMConfig{
-			UseClawVault: "auto",
-		}
+		config = DefaultPAMConfig()
 	}
 
 	pam := &PAM{
@@ -108,7 +108,11 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 
 	// Check config override
 	if p.config.UseClawVault == "false" {
-		return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "disabled"}, nil
+		store, err := p.newFallbackStore()
+		if err != nil {
+			return nil, ClawVaultStatus{Available: false, Mode: "disabled"}, err
+		}
+		return store, ClawVaultStatus{Available: false, Mode: "disabled"}, nil
 	}
 
 	if p.config.UseClawVault == "true" && !mode.Available {
@@ -117,29 +121,101 @@ func (p *PAM) detectAndInitStore() (TokenStore, ClawVaultStatus, error) {
 
 	if mode.Available {
 		// Use ClawVault store
-		store, err := NewClawVaultTokenStore(p.config.ClawVault.TokenPrefix, mode.Endpoint)
-		if err != nil {
-			return nil, mode, fmt.Errorf("ClawVault store init failed: %w", err)
+		store := NewClawVaultTokenStore(p.config.ClawVault.TokenPrefix, p.config.ClawVault.TimeoutSec)
+		
+		// Verify availability
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.CheckAvailability(ctx); err != nil {
+			// If explicitly required, fail; otherwise fallback
+			if p.config.UseClawVault == "true" {
+				mode.Error = err
+				return nil, mode, fmt.Errorf("clawvault required but availability check failed: %w", err)
+			}
+			store, fallbackErr := p.newFallbackStore()
+			if fallbackErr != nil {
+				return nil, ClawVaultStatus{Available: false, Mode: "fallback", Error: err}, fallbackErr
+			}
+			return store, ClawVaultStatus{Available: false, Mode: "fallback", Error: err}, nil
 		}
+		
 		return store, mode, nil
 	}
 
 	// Fallback to local
-	return p.newFallbackStore(), ClawVaultStatus{Available: false, Mode: "fallback"}, nil
+	store, err := p.newFallbackStore()
+	if err != nil {
+		return nil, ClawVaultStatus{Available: false, Mode: "fallback"}, err
+	}
+	return store, ClawVaultStatus{Available: false, Mode: "fallback"}, nil
 }
 
 // newFallbackStore creates local encrypted storage
-func (p *PAM) newFallbackStore() TokenStore {
+func (p *PAM) newFallbackStore() (TokenStore, error) {
 	storagePath := p.config.Fallback.StoragePath
 	if storagePath == "" {
-		storagePath = filepath.Join(os.Getenv("HOME"), ".config", "kingcrab", "tokens")
+		// First try to get a reliable home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine home directory for token storage: %w", err)
+		}
+		storagePath = filepath.Join(homeDir, ".config", "kingcrab", "tokens")
 	}
 	return NewLocalEncryptedTokenStore(storagePath, p.config.Fallback.EncryptionKeyEnv)
 }
 
 // detectClawVault checks for ClawVault availability
 func (p *PAM) detectClawVault() ClawVaultStatus {
-	// Check socket paths
+	// Primary check: secret-tool (used by ClawVault on Linux)
+	// This is the underlying mechanism ClawVault uses
+
+	// Check if secret-tool is available (works on Linux with GNOME Keyring)
+	client := NewClawVaultClient(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.CheckAvailability(ctx); err == nil {
+		return ClawVaultStatus{
+			Available: true,
+			Mode:      "secret-tool",
+			Endpoint:  "gnome-keyring",
+		}
+	}
+
+	// Check configured socket first (if provided)
+	if p.config.ClawVault.Socket != "" {
+		if _, err := os.Stat(p.config.ClawVault.Socket); err == nil {
+			return ClawVaultStatus{
+				Available: true,
+				Mode:      "socket",
+				Endpoint:  p.config.ClawVault.Socket,
+			}
+		}
+	}
+
+	// Check configured host first (if provided)
+	if p.config.ClawVault.Host != "" {
+		host := p.config.ClawVault.Host
+		// Simple TCP check - try to reach the endpoint
+		if strings.HasPrefix(host, "http://") {
+			host = strings.TrimPrefix(host, "http://")
+		}
+		if strings.HasPrefix(host, "https://") {
+			host = strings.TrimPrefix(host, "https://")
+		}
+		if strings.Contains(host, ":") {
+			port := strings.Split(host, ":")[1]
+			if checkPort(strings.Split(host, ":")[0], port) {
+				return ClawVaultStatus{
+					Available: true,
+					Mode:      "network",
+					Endpoint:  p.config.ClawVault.Host,
+				}
+			}
+		}
+	}
+
+	// Fallback: Check for socket (legacy/local ClawVault)
 	socketPaths := []string{
 		"/var/run/clawvault.sock",
 		filepath.Join(os.Getenv("HOME"), ".clawvault", "clawvault.sock"),
@@ -147,36 +223,40 @@ func (p *PAM) detectClawVault() ClawVaultStatus {
 
 	for _, path := range socketPaths {
 		if _, err := os.Stat(path); err == nil {
-			// Socket exists - try to connect
-			if p.testClawVaultConnection(path) {
-				return ClawVaultStatus{
-					Available: true,
-					Mode:      "socket",
-					Endpoint:  path,
-				}
+			return ClawVaultStatus{
+				Available: true,
+				Mode:     "socket",
+				Endpoint: path,
 			}
 		}
 	}
 
-	// Check network endpoints
+	// Fallback: Check network endpoints
 	hosts := []string{
 		"http://127.0.0.1:3000",
 		"http://127.0.0.1:3001",
 	}
 
 	for _, host := range hosts {
-		if p.testClawVaultHTTP(host) {
-			return ClawVaultStatus{
-				Available: true,
-				Mode:      "network",
-				Endpoint:  host,
+		// Simple TCP check - try to reach the endpoint
+		if strings.HasPrefix(host, "http://") {
+			host = strings.TrimPrefix(host, "http://")
+		}
+		if strings.Contains(host, ":") {
+			port := strings.Split(host, ":")[1]
+			if checkPort(strings.Split(host, ":")[0], port) {
+				return ClawVaultStatus{
+					Available: true,
+					Mode:      "network",
+					Endpoint:  "http://" + host,
+				}
 			}
 		}
 	}
 
 	// Check Tailscale
 	if tsIP := os.Getenv("CLAWVAULT_TAILSCALE_IP"); tsIP != "" {
-		if p.testClawVaultHTTP("http://" + tsIP + ":3000") {
+		if checkPort(tsIP, "3000") {
 			return ClawVaultStatus{
 				Available: true,
 				Mode:      "tailscale",
@@ -188,37 +268,76 @@ func (p *PAM) detectClawVault() ClawVaultStatus {
 	return ClawVaultStatus{Available: false}
 }
 
-// testClawVaultConnection tests socket connection
-func (p *PAM) testClawVaultConnection(socketPath string) bool {
-	// Simplified - in production would actually connect and ping
-	// For now, return true if socket exists and config allows
-	return p.config.UseClawVault != "false"
-}
-
-// testClawVaultHTTP tests HTTP endpoint
-func (p *PAM) testClawVaultHTTP(endpoint string) bool {
-	// Simplified - in production would make HTTP request
-	return p.config.UseClawVault != "false"
+// checkPort attempts a TCP connection to check if a port is open
+func checkPort(host, port string) bool {
+	address := net.JoinHostPort(host, port)
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // StoreToken stores a biometric token for a user
 func (p *PAM) StoreToken(ctx context.Context, userID string, token Token) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.store.Store(ctx, userID, token)
 }
 
 // RetrieveToken retrieves a user's biometric token
 func (p *PAM) RetrieveToken(ctx context.Context, userID string) (*Token, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.store.Retrieve(ctx, userID)
+	token, err := p.store.Retrieve(ctx, userID)
+	p.mu.RUnlock()
+
+	if err != nil {
+		return nil, err
+	}
+
+	if token == nil {
+		return nil, nil
+	}
+
+	// Check if token has expired using configured TTL
+	ttl := p.config.Fallback.TTLMinutes
+	if ttl > 0 && !TokenExpirationChecker(token, ttl) {
+		// Token appears expired - acquire write lock and re-check to avoid TOCTOU race
+		p.mu.Lock()
+		defer p.mu.Unlock()
+
+		// Re-retrieve token under write lock
+		freshToken, retrieveErr := p.store.Retrieve(ctx, userID)
+		if retrieveErr != nil {
+			return nil, retrieveErr
+		}
+
+		if freshToken == nil {
+			return nil, nil
+		}
+
+		// Re-evaluate expiry with fresh token
+		if !TokenExpirationChecker(freshToken, ttl) {
+			// Still expired, safe to delete
+			deleteErr := p.store.Delete(ctx, userID)
+			if deleteErr != nil {
+				return nil, fmt.Errorf("token expired and failed to delete: %w", deleteErr)
+			}
+			return nil, fmt.Errorf("token expired (TTL: %d minutes)", ttl)
+		}
+
+		// Token is actually still valid, return it
+		return freshToken, nil
+	}
+
+	return token, nil
 }
 
 // DeleteToken removes a user's biometric token
 func (p *PAM) DeleteToken(ctx context.Context, userID string) error {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.store.Delete(ctx, userID)
 }
 
@@ -243,7 +362,8 @@ func DefaultPAMConfig() *PAMConfig {
 			TimeoutSec:  5,
 		},
 		Fallback: FallbackConfig{
-			TTLMinutes: 5,
+			EncryptionKeyEnv: "PAM_FALLBACK_ENCRYPTION_KEY",
+			TTLMinutes:       5,
 		},
 	}
 }

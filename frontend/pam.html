@@ -517,12 +517,52 @@
         // Handle denial
         async function handleDeny() {
             if (!REQUEST_ID) return;
-            
-            // For now, just close with a callback
-            // In production, would call /api/pam/deny
-            webApp.showConfirm('Deny this elevation request?', (confirmed) => {
-                if (confirmed) {
+
+            webApp.showConfirm('Deny this elevation request?', async (confirmed) => {
+                if (!confirmed) return;
+
+                const btn = document.getElementById('btn-deny');
+                btn.disabled = true;
+                btn.innerHTML = '<div class="spinner"></div><span>Denying...</span>';
+
+                try {
+                    // Get biometric authentication
+                    const token = await authenticateBiometric();
+
+                    if (!token) {
+                        // User cancelled or failed
+                        resetDenyButton();
+                        return;
+                    }
+
+                    // Submit denial
+                    const response = await fetch(`${API_BASE}/api/pam/deny`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            initData: webApp.initData,
+                            biometric_token: token,
+                            request_id: REQUEST_ID,
+                            reason: 'Denied via Mini App'
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        showError(result.error || 'Denial failed');
+                        resetDenyButton();
+                        return;
+                    }
+
+                    // Success - refresh request status to confirm
+                    await loadRequest();
                     showDeniedState();
+
+                } catch (e) {
+                    console.error('Denial error:', e);
+                    showError(e.message || 'Failed to deny request');
+                    resetDenyButton();
                 }
             });
         }
@@ -556,7 +596,13 @@
             btn.innerHTML = '<span class="btn-icon">🔐</span><span>Authenticate & Approve</span>';
             isAuthenticating = false;
         }
-        
+
+        function resetDenyButton() {
+            const btn = document.getElementById('btn-deny');
+            btn.disabled = false;
+            btn.innerHTML = '<span class="btn-icon">❌</span><span>Deny Request</span>';
+        }
+
         // Start
         init();
     </script>
