@@ -84,7 +84,20 @@ export default function (api: any) {
     return 'openclaw-agent';
   };
 
-  // Helper: make HTTP request to daemon
+  /**
+   * Send a JSON HTTP request to the configured KingCrab daemon API and return its response.
+   *
+   * Sends the request to `${daemonUrl}/api/v1${endpoint}` using either a Unix socket (when
+   * `daemonUrl` starts with `unix:` or `/`) or standard HTTP/HTTPS transport. The request
+   * uses `Content-Type: application/json` and honors the configured `timeout`.
+   *
+   * @param endpoint - Path appended to `/api/v1` (e.g. `/request` or `/request/:id`)
+   * @param method - HTTP method to use; defaults to `GET`
+   * @param body - Optional request payload serialized as JSON
+   * @returns The daemon response parsed as JSON, or the raw response text when parsing fails
+   * @throws Error with message `HTTP <status>: <message>` for non-2xx responses
+   * @throws Error `Request timeout - daemon may be unavailable` when the request times out
+   */
   async function daemonRequest(endpoint: string, method: string = 'GET', body?: any): Promise<any> {
     // Detect Unix socket transport
     const isUnixSocket = daemonUrl.startsWith('unix:') || daemonUrl.startsWith('/');

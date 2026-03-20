@@ -16,7 +16,8 @@ type OpenClawNotifier struct {
 	enabled    bool
 }
 
-// NewOpenClawNotifier creates a new OpenClaw notification service
+// NewOpenClawNotifier creates an OpenClawNotifier configured to send webhook notifications to the provided webhookURL.
+// The returned notifier uses an HTTP client with a 10-second timeout and is enabled only when webhookURL is non-empty.
 func NewOpenClawNotifier(webhookURL string) *OpenClawNotifier {
 	return &OpenClawNotifier{
 		webhookURL: webhookURL,
@@ -149,7 +150,9 @@ type NotificationRequest struct {
 	ExpiresAt    time.Time
 }
 
-// truncateOutput limits output length for notifications
+// truncateOutput truncates s to at most maxLen characters, appending "..." when truncation occurs.
+// It returns s unchanged when its length is less than or equal to maxLen; otherwise it returns the
+// first maxLen characters followed by "...".
 func truncateOutput(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

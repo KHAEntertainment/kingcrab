@@ -34,7 +34,14 @@ type ServerV2 struct {
 	allowedOrigins []string
 }
 
-// NewServerV2 creates a new database-backed server
+// NewServerV2 creates and wires a ServerV2 with database-backed storage, PAM, executor,
+// notifier, and API handler based on the provided configuration.
+// 
+// The function connects to the database, runs migrations (30s timeout), constructs a
+// PAM-backed request store, initializes PAM from cfg.PAM, creates a command executor
+// using cfg.AllowedCommands, and configures an OpenClaw notifier when enabled.
+// It returns an initialized *ServerV2 on success. Errors are returned if the function
+// fails to connect to the database, run migrations, or initialize PAM.
 func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	// Connect to database
 	database, err := db.NewConnectionFromEnv()

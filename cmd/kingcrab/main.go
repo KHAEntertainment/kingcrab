@@ -11,6 +11,9 @@ import (
 
 const version = "1.0.0"
 
+// main is the program entry point that logs startup (including the build version), loads configuration,
+// constructs the server, registers signal handling, and starts the server.
+ // On failure to load configuration, create the server, or start the server, it logs the error and exits with status code 1.
 func main() {
 	logger.Info("KingCrab starting", map[string]interface{}{
 		"version": version,

@@ -24,7 +24,7 @@ type V1Handler struct {
 	allowlist  []string
 }
 
-// NewV1Handler creates a new v1 API handler
+// NewV1Handler creates and returns a V1Handler configured with the provided request store, command executor, OpenClaw notifier, and command allowlist.
 func NewV1Handler(store pam.RequestStore, exec *executor.Executor, notifier *notifications.OpenClawNotifier, allowlist []string) *V1Handler {
 	return &V1Handler{
 		store:     store,
@@ -421,7 +421,13 @@ func (h *V1Handler) isCommandAllowed(command string) bool {
 	return false
 }
 
-// matchCommand checks if a command matches a pattern
+// matchCommand reports whether command matches pattern.
+// The pattern can be:
+// - "*" to match any command,
+// - an exact string to match exactly, or
+// - a string ending with "*" to match any command that starts with the prefix before the trailing "*".
+//
+// It returns true when the command matches the pattern, false otherwise.
 func matchCommand(pattern, command string) bool {
 	if pattern == "*" {
 		return true
@@ -441,18 +447,24 @@ func matchCommand(pattern, command string) bool {
 	return false
 }
 
-// Helper functions
+// respondJSON writes data as JSON to the provided http.ResponseWriter and sets the Content-Type header to "application/json".
 func respondJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
 }
 
+// respondError writes a JSON error response with the provided HTTP status code.
+// It sets the Content-Type header to "application/json", writes the status code,
+// and encodes a JSON object with an "error" field containing the provided message.
 func respondError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
+// splitPath splits a slash-delimited path into its non-empty segments.
+// It ignores leading, trailing, and consecutive slashes and returns the
+// segments in order.
 func splitPath(path string) []string {
 	var parts []string
 	var current strings.Builder

@@ -10,7 +10,14 @@ import (
 	"github.com/KHAEntertainment/kingcrab/internal/logger"
 )
 
-// TokenizeAndMatch performs tokenized pattern matching against a command
+// TokenizeAndMatch determines whether a command string matches a space-separated
+// pattern that may end with a trailing '*' wildcard.
+// It returns true if the pattern is "*" or exactly equals the command, or if
+// every non-wildcard pattern token equals the corresponding command token while
+// satisfying token-count rules (command must have at least as many tokens as
+// the non-wildcard pattern tokens; if the pattern has no trailing '*', token
+// counts must be equal). Commands or patterns that are empty do not match, and
+// any command containing shell metacharacters/operators is rejected.
 func TokenizeAndMatch(pattern, command string) bool {
 	if pattern == "*" {
 		return true
@@ -62,7 +69,10 @@ func TokenizeAndMatch(pattern, command string) bool {
 	return true
 }
 
-// tokenizeCommand splits a command into whitespace-separated tokens
+// tokenizeCommand splits the input string s into whitespace-separated tokens.
+// It treats space, tab, newline, and carriage return as delimiters and omits
+// empty tokens produced by consecutive delimiters. The returned slice contains
+// tokens in their original order.
 func tokenizeCommand(s string) []string {
 	var tokens []string
 	var current []rune
@@ -85,7 +95,9 @@ func tokenizeCommand(s string) []string {
 	return tokens
 }
 
-// containsShellMetacharacters checks if a token contains dangerous shell characters
+// containsShellMetacharacters reports whether the token contains any shell
+// metacharacter that is considered dangerous for command execution (one of
+// `;|&<>`$(){}[]!*?~`).
 func containsShellMetacharacters(token string) bool {
 	// Reject tokens containing shell operators and metacharacters
 	dangerousChars := ";|&<>`$(){}[]!*?~"
@@ -110,7 +122,7 @@ type Executor struct {
 	maxDuration     time.Duration
 }
 
-// NewExecutor creates a new executor with allowlist and max duration
+// NewExecutor returns a new Executor configured with the provided allowlist of command patterns and maximum execution duration.
 func NewExecutor(allowedCommands []string, maxDuration time.Duration) *Executor {
 	return &Executor{
 		allowedCommands: allowedCommands,

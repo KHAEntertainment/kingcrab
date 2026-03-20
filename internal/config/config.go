@@ -90,7 +90,12 @@ type OpenClawConfig struct {
 	Enabled       bool    `json:"enabled"`       // Enable OpenClaw integration
 }
 
-// DefaultConfig returns sensible defaults
+// DefaultConfig returns a *Config populated with sensible defaults for KingCrab.
+// The defaults include Version "0.1.0", a unix listen socket at /var/run/kingcrab.sock (also used as SocketPath),
+// a curated list of AllowedCommands, RequireReason true, AutoApproveTimeout 0, LogDir "/var/log/kingcrab",
+// DataDir "/var/lib/kingcrab", Port 8080, and LogLevel "info". Telegram is initialized with an empty AllowedUsers slice,
+// PAM is set via pam.DefaultPAMConfig(), and OpenClaw.WebhookURL is populated from the KINGCRAB_OPENCLAW_WEBHOOK
+// environment variable with OpenClaw.Enabled set when that variable is non-empty.
 func DefaultConfig() *Config {
 	return &Config{
 		Version: "0.1.0",
@@ -124,7 +129,13 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load loads config from file
+// Load loads configuration from the JSON file at the given path.
+// If the file does not exist, it returns the defaults produced by DefaultConfig.
+// If the file exists, it parses JSON into the default config and returns an error
+// if reading or unmarshalling fails.
+// Environment variable KINGCRAB_PORT, when set to an integer 1–65535, overrides cfg.Port.
+// If cfg.SocketPath is empty after loading and cfg.Listen.Path is set, cfg.SocketPath
+// is set to cfg.Listen.Path.
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 

@@ -22,19 +22,22 @@ USER="kingcrab"
 GROUP="kingcrab"
 SERVICE_FILE="/etc/systemd/system/kingcrab.service"
 
-# Functions
+# log_info prints an informational message prefixed with a green `[INFO]` tag followed by the provided text.
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
 
+# log_warn prints a warning message prefixed with `[WARN]` in yellow to stdout.
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+# log_error prints an error message prefixed with a red `[ERROR]` tag.
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# check_root verifies the script runs as root and exits with status 1 if not.
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run as root"
@@ -42,6 +45,7 @@ check_root() {
     fi
 }
 
+# check_prerequisites verifies presence of required tooling: detects Go (logs a warning if missing), detects the PostgreSQL client (logs a warning if missing), and ensures systemd is available (logs an error and exits with status 1 if missing).
 check_prerequisites() {
     log_info "Checking prerequisites..."
 
@@ -68,6 +72,7 @@ check_prerequisites() {
     fi
 }
 
+# create_user creates the system user specified by $USER (system account with no login and home set to $DATA_DIR) if it does not already exist.
 create_user() {
     log_info "Creating system user..."
 
@@ -79,6 +84,7 @@ create_user() {
     fi
 }
 
+# create_directories creates required config, data, log, run, and install directories and sets ownership and permissions appropriate for the kingcrab system user and group.
 create_directories() {
     log_info "Creating directories..."
 
@@ -100,6 +106,7 @@ create_directories() {
     chmod 755 "$RUN_DIR"
 }
 
+# install_binary installs the KingCrab binary into "$INSTALL_DIR" by copying it from "./$BINARY_NAME" or "./bin/$BINARY_NAME", makes the installed file executable, and exits with status 1 if no source binary is found.
 install_binary() {
     log_info "Installing binary..."
 
@@ -118,6 +125,8 @@ install_binary() {
     fi
 }
 
+# install_config installs the daemon configuration at "$CONFIG_DIR/config.json".
+# If a config already exists it is backed up to "config.json.bak". If a project example config exists it is copied into place; otherwise a sensible default JSON config is created with embedded version, runtime paths, allowed commands, and OpenClaw settings. The resulting file is owned by root:"$GROUP" and set to mode 640.
 install_config() {
     log_info "Installing configuration..."
 
@@ -160,6 +169,7 @@ EOF
     chown root:"$GROUP" "$CONFIG_DIR/config.json"
 }
 
+# install_systemd_service writes a hardened systemd unit for the KingCrab daemon to $SERVICE_FILE (including environment, logging, and security hardening) then reloads systemd and logs completion.
 install_systemd_service() {
     log_info "Installing systemd service..."
 
@@ -202,6 +212,7 @@ EOF
     log_info "Systemd service installed"
 }
 
+# setup_database prompts for PostgreSQL credentials, creates the database and user if needed, writes a secure systemd override with the database environment variables, reloads systemd, and runs the bundled migration SQL if present.
 setup_database() {
     log_info "Setting up database..."
 
@@ -283,6 +294,7 @@ EOF
     fi
 }
 
+# start_service enables and starts the kingcrab systemd service, waits briefly, verifies the service is active, logs success or an error (with a journalctl hint), and exits with status 1 if the service failed to start.
 start_service() {
     log_info "Starting KingCrab service..."
 
@@ -301,6 +313,7 @@ start_service() {
     fi
 }
 
+# print_success prints the installation completion message including service management commands, a health endpoint example, the configuration file path, and brief next-step instructions.
 print_success() {
     echo ""
     log_info "KingCrab v${VERSION} installed successfully!"
@@ -324,6 +337,7 @@ print_success() {
     echo ""
 }
 
+# main runs the full installation workflow for the KingCrab daemon: performs preflight checks, creates the system user and directories, installs the binary and configuration, writes the systemd service, optionally sets up the database interactively, starts and enables the service, and prints completion instructions.
 main() {
     log_info "KingCrab v${VERSION} Installer"
     echo ""
