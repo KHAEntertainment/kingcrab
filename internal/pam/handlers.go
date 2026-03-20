@@ -117,10 +117,7 @@ type CreateRequestResponse struct {
 
 // ServeHTTP implements http.Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers for Mini App
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data")
+	// CORS headers are set by corsMiddleware in server_v2.go
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)

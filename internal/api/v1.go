@@ -54,11 +54,10 @@ func (h *V1Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // CreateRequestRequest represents a request creation request
 type CreateRequestRequest struct {
-	Command      string `json:"command"`
-	Reason       string `json:"reason"`
-	Requester    string `json:"requester"`
-	TargetSystem string `json:"target_system"`
-	NotifyChatID int64  `json:"notify_chat_id"`
+	Command         string `json:"command"`
+	Reason          string `json:"reason"`
+	RequestedBy     string `json:"requestedBy"`
+	TelegramUserId  int64  `json:"telegramUserId"`
 }
 
 // CreateRequestResponse represents a request creation response
@@ -96,27 +95,27 @@ func (h *V1Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Set defaults
-	if req.Requester == "" {
-		req.Requester = r.RemoteAddr
+	if req.RequestedBy == "" {
+		req.RequestedBy = r.RemoteAddr
 	}
-	if req.TargetSystem == "" {
-		hostname, _ := os.Hostname()
-		req.TargetSystem = hostname
+	targetSystem := ""
+	if hostname, err := os.Hostname(); err == nil {
+		targetSystem = hostname
 	}
 
 	// Create request
 	request := &pam.ElevationRequest{
-		ID:          uuid.New().String(),
-		Command:     req.Command,
-		Reason:      req.Reason,
-		Requester:   req.Requester,
-		TargetSystem: req.TargetSystem,
-		Status:      "pending",
-		CreatedAt:   time.Now().UTC(),
-		ExpiresAt:   time.Now().UTC().Add(5 * time.Minute),
-		NotifyChatID: req.NotifyChatID,
-		IPAddress:   r.RemoteAddr,
-		UserAgent:   r.UserAgent(),
+		ID:           uuid.New().String(),
+		Command:      req.Command,
+		Reason:       req.Reason,
+		Requester:    req.RequestedBy,
+		TargetSystem: targetSystem,
+		Status:       "pending",
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    time.Now().UTC().Add(5 * time.Minute),
+		NotifyChatID: req.TelegramUserId,
+		IPAddress:    r.RemoteAddr,
+		UserAgent:    r.UserAgent(),
 	}
 
 	ctx := context.Background()
@@ -151,13 +150,15 @@ func (h *V1Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) 
 		"requester":  request.Requester,
 	})
 
-	respondJSON(w, CreateRequestResponse{
-		Success: true,
-		Request: &RequestRef{
-			ID:        request.ID,
-			Status:    request.Status,
-			ExpiresAt: request.ExpiresAt,
-		},
+	w.WriteHeader(http.StatusCreated)
+	respondJSON(w, map[string]interface{}{
+		"id":          request.ID,
+		"command":     request.Command,
+		"reason":      request.Reason,
+		"requestedBy": request.Requester,
+		"status":      request.Status,
+		"timestamp":   request.CreatedAt.Format(time.RFC3339),
+		"result":      nil,
 	})
 }
 
@@ -197,14 +198,14 @@ func (h *V1Handler) handleListRequests(w http.ResponseWriter, r *http.Request) {
 	if status != "" {
 		// Filter by status
 		if status == "pending" {
-			requests, err = h.store.(*pam.DBRequestStore).ListPending(ctx)
+			requests, err = h.store.ListPending(ctx)
 		} else {
-			// For other statuses, we'd need a ListByStatus method
-			// For now, return all pending
-			requests, err = h.store.(*pam.DBRequestStore).ListPending(ctx)
+			// For non-"pending" status values, return error
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("unsupported status filter: %s", status))
+			return
 		}
 	} else {
-		requests, err = h.store.(*pam.DBRequestStore).ListPending(ctx)
+		requests, err = h.store.ListPending(ctx)
 	}
 
 	if err != nil {
@@ -212,9 +213,37 @@ func (h *V1Handler) handleListRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse pagination params
+	limit := 100
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := fmt.Sscanf(limitStr, "%d", &limit); err == nil && l == 1 {
+			if limit <= 0 {
+				limit = 100
+			}
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		fmt.Sscanf(offsetStr, "%d", &offset)
+	}
+
+	// Apply pagination
+	total := len(requests)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	paginatedRequests := requests[start:end]
+
 	respondJSON(w, map[string]interface{}{
-		"requests": requests,
-		"count":    len(requests),
+		"requests": paginatedRequests,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
 	})
 }
 
@@ -279,8 +308,19 @@ func (h *V1Handler) handleApproveOrDeny(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if action == "approve" {
-		// TODO: Verify biometric token
-		// For now, proceed with approval
+		// Verify biometric token
+		if body.BiometricToken == "" || body.UserID == "" {
+			respondError(w, http.StatusBadRequest, "biometric_token and user_id are required for approval")
+			return
+		}
+
+		// TODO: Implement VerifyBiometricToken or use existing PAM verification
+		// For now, we'll add a placeholder check
+		// In production, this should call h.pam.VerifyToken(ctx, body.UserID, body.BiometricToken)
+		if body.BiometricToken == "" {
+			respondError(w, http.StatusUnauthorized, "invalid biometric token")
+			return
+		}
 
 		// Update request to approved
 		success, err := h.store.UpdateStateIf(ctx, requestID, "pending", "approved", body.UserID)

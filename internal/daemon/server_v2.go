@@ -22,15 +22,16 @@ import (
 
 // ServerV2 is the database-backed KingCrab server
 type ServerV2 struct {
-	config      *config.Config
-	db          *db.Connection
-	store       pam.RequestStore
-	pam         *pam.PAM
-	executor    *executor.Executor
-	notifier    *notifications.OpenClawNotifier
-	apiHandler  *api.V1Handler
-	pamHandler  *pam.Handler
-	httpServer  *http.Server
+	config         *config.Config
+	db             *db.Connection
+	store          pam.RequestStore
+	pam            *pam.PAM
+	executor       *executor.Executor
+	notifier       *notifications.OpenClawNotifier
+	apiHandler     *api.V1Handler
+	pamHandler     *pam.Handler
+	httpServer     *http.Server
+	allowedOrigins []string
 }
 
 // NewServerV2 creates a new database-backed server
@@ -76,14 +77,18 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	// Create API handler
 	apiHandler := api.NewV1Handler(store, exec, notifier, cfg.AllowedCommands)
 
+	// Configure allowed origins (default to localhost for now)
+	allowedOrigins := []string{"http://localhost:3000", "http://localhost:8080"}
+
 	return &ServerV2{
-		config:     cfg,
-		db:         database,
-		store:      store,
-		pam:        p,
-		executor:   exec,
-		notifier:   notifier,
-		apiHandler: apiHandler,
+		config:         cfg,
+		db:             database,
+		store:          store,
+		pam:            p,
+		executor:       exec,
+		notifier:       notifier,
+		apiHandler:     apiHandler,
+		allowedOrigins: allowedOrigins,
 	}, nil
 }
 
@@ -217,7 +222,23 @@ func (s *ServerV2) loggingMiddleware(next http.Handler) http.Handler {
 // corsMiddleware adds CORS headers
 func (s *ServerV2) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+
+		// Check if origin is in whitelist
+		allowed := false
+		for _, allowedOrigin := range s.allowedOrigins {
+			if origin == allowedOrigin {
+				allowed = true
+				break
+			}
+		}
+
+		// Set CORS headers if origin is allowed
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-ID")
 

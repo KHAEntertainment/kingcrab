@@ -71,8 +71,70 @@ export default function (api: any) {
   const daemonUrl = cfg.daemonUrl;
   const timeout = cfg.timeout || 30000;
 
+  // Get stable caller identity (from OpenClaw session or context)
+  const getCallerIdentity = (): string => {
+    // Try to get identity from API context
+    if (api.session && api.session.user) {
+      return `openclaw-user-${api.session.user.id}`;
+    }
+    if (api.context && api.context.agentId) {
+      return `openclaw-agent-${api.context.agentId}`;
+    }
+    // Fallback
+    return 'openclaw-agent';
+  };
+
   // Helper: make HTTP request to daemon
   async function daemonRequest(endpoint: string, method: string = 'GET', body?: any): Promise<any> {
+    // Detect Unix socket transport
+    const isUnixSocket = daemonUrl.startsWith('unix:') || daemonUrl.startsWith('/');
+
+    if (isUnixSocket) {
+      // Unix socket support - use Node.js http client
+      const http = require('http');
+      const socketPath = daemonUrl.startsWith('unix:') ? daemonUrl.slice(5) : daemonUrl;
+
+      return new Promise((resolve, reject) => {
+        const requestOptions = {
+          socketPath: socketPath,
+          path: `/api/v1${endpoint}`,
+          method: method,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: timeout,
+        };
+
+        const req = http.request(requestOptions, (res: any) => {
+          let data = '';
+          res.on('data', (chunk: any) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              try {
+                resolve(JSON.parse(data));
+              } catch {
+                resolve(data);
+              }
+            } else {
+              reject(new Error(`HTTP ${res.statusCode}: ${data || res.statusMessage}`));
+            }
+          });
+        });
+
+        req.on('error', (err: any) => reject(err));
+        req.on('timeout', () => {
+          req.destroy();
+          reject(new Error('Request timeout - daemon may be unavailable'));
+        });
+
+        if (body) {
+          req.write(JSON.stringify(body));
+        }
+        req.end();
+      });
+    }
+
+    // Standard HTTP/HTTPS request
     const url = `${daemonUrl}/api/v1${endpoint}`;
     const options: RequestInit = {
       method,
@@ -127,10 +189,11 @@ export default function (api: any) {
       const { command, reason = '' } = params;
 
       try {
+        const callerIdentity = getCallerIdentity();
         const result: DaemonResponse = await daemonRequest('/request', 'POST', {
           command,
           reason: reason || 'Requested via OpenClaw agent',
-          requester: 'openclaw-agent',
+          requester: callerIdentity,
         });
 
         if (!result.success) {
@@ -210,37 +273,30 @@ export default function (api: any) {
   });
 
   // ========================================================================
-  // Tool: kingcrab_approve
+  // Tool: kingcrab_approve (DISABLED)
   // ========================================================================
+  // Note: Direct approval from the plugin is disabled for security reasons.
+  // Approvals must be performed via biometric authentication through Telegram.
+  // This tool registration is commented out to prevent client-side approvals.
 
+  /*
   api.registerTool({
     name: 'kingcrab_approve',
-    label: 'Approve KingCrab Request',
-    description: 'Approve a pending KingCrab elevation request (requires biometric auth via Telegram)',
+    label: 'Approve KingCrab Request (DISABLED)',
+    description: 'DISABLED: Approvals must be done via Telegram with biometric authentication',
     parameters: Type.Object({
       requestId: Type.String({ description: 'The request ID to approve' }),
     }),
     async execute(_toolCallId: string, params: { requestId: string }) {
-      const { requestId } = params;
-
-      try {
-        const result = await daemonRequest(`/request/${requestId}/approve`, 'POST', {});
-
-        return {
-          content: [{
-            type: 'text',
-            text: result.success
-              ? `✅ Request ${requestId.slice(0, 8)} approved and executed.\n\nExit Code: ${result.exit_code}\nOutput:\n${result.output || '(no output)'}`
-              : `❌ Failed to approve request: ${result.error || 'Unknown error'}`,
-          }],
-        };
-      } catch (error: any) {
-        return {
-          content: [{ type: 'text', text: `❌ Error: ${error.message}` }],
-        };
-      }
+      return {
+        content: [{
+          type: 'text',
+          text: '❌ Direct approval is disabled. Please approve requests via Telegram with biometric authentication.',
+        }],
+      };
     },
   });
+  */
 
   // ========================================================================
   // Tool: kingcrab_deny

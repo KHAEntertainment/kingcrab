@@ -21,6 +21,7 @@
   "author": "KHAEntertainment",
   "license": "MIT",
   "dependencies": {
+    "@sinclair/typebox": "^0.32.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {

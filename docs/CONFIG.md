@@ -90,8 +90,8 @@ PostgreSQL database connection.
 #### `allowedCommands` (array of strings, required)
 Commands that agents are allowed to request.
 
-Supports wildcards (`*`) for flexible matching:
-- `"apt install *"` - Allows `apt install <any-package>`
+Supports exact matches or a trailing `*` for raw prefix matching:
+- `"apt install *"` - Allows `apt install <any-package>` (trailing wildcard matches remaining tokens)
 - `"apt update"` - Exact match only
 - `"systemctl restart *"` - Allows restarting any service
 
@@ -106,11 +106,12 @@ Supports wildcards (`*`) for flexible matching:
     "systemctl start *",
     "systemctl stop *",
     "systemctl status *",
-    "docker restart *",
-    "docker-compose -f /opt/* restart"
+    "docker restart *"
   ]
 }
 ```
+
+**Note:** Shell globs and embedded wildcards (e.g., `/opt/*/file`) are not supported. Only use exact command strings or a trailing `*` on the full command. The tokenized matcher also rejects shell metacharacters like `;`, `|`, `&`, `<`, `>`, `` ` ``, `$`, `()`, `{}`, `[]`, `!`, `?`, and `~`.
 
 **Warning:** Avoid overly permissive patterns like `"*"` or `"sudo *"`.
 
@@ -178,17 +179,8 @@ The plugin is configured in `~/.openclaw/openclaw.json`.
         "enabled": true,
         "config": {
           "daemonUrl": "http://localhost:8080",
-          "daemonToken": "",
           "timeout": 30000,
-          "maxRetries": 3,
-          "allowedCommands": [],
-          "requireReason": true,
-          "notifications": {
-            "enabled": true,
-            "defaultUserId": null
-          },
-          "webhookUrl": "",
-          "webhookSecret": ""
+          "allowedCommands": []
         }
       }
     }
@@ -200,17 +192,11 @@ The plugin is configured in `~/.openclaw/openclaw.json`.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `daemonUrl` | string | `"http://localhost:8080"` | KingCrab daemon URL |
-| `daemonToken` | string | `""` | Shared secret for daemon authentication |
+| `daemonUrl` | string | `"http://localhost:8080"` | KingCrab daemon URL (can be Unix socket path) |
 | `timeout` | integer | `30000` | HTTP request timeout (ms) |
-| `maxRetries` | integer | `3` | Number of retries on connection failure |
-| `allowedCommands` | array | (daemon config) | Override daemon allowlist |
-| `requireReason` | boolean | `true` | Require reason for requests |
-| `notifications` | object | - | Notification settings |
-| `webhookUrl` | string | `""` | Webhook URL for daemon callbacks |
-| `webhookSecret` | string | `""` | Secret for webhook validation |
+| `allowedCommands` | array | `[]` | Client-side command list (informational, not enforced) |
 
-**Note:** The plugin's `allowedCommands` overrides the daemon's config if set.
+**Note:** The plugin currently reads only `daemonUrl`, `timeout`, and `allowedCommands`. Additional config options like `daemonToken`, `maxRetries`, `requireReason`, `notifications`, `webhookUrl`, and `webhookSecret` are not yet implemented. See `plugin/index.ts` for the actual config keys read by the plugin.
 
 ## Environment Variables
 

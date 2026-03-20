@@ -21,14 +21,20 @@ type Config struct {
 	SocketPath        string          `json:"socketPath"`
 	LogLevel          string          `json:"logLevel"`
 
-	// Telegram bot for approvals
-	Telegram          *TelegramConfig `json:"telegram"`
+	// Additional configuration sections
+	Auth              *AuthConfig      `json:"auth,omitempty"`
+	Telegram          *TelegramConfig  `json:"telegram,omitempty"`
+	Audit             *AuditConfig     `json:"audit,omitempty"`
+	RateLimit         *RateLimitConfig `json:"rateLimit,omitempty"`
+	Webhook           *WebhookConfig   `json:"webhook,omitempty"`
+	Retention         *RetentionConfig `json:"retention,omitempty"`
+	Security          *SecurityConfig  `json:"security,omitempty"`
 
 	// PAM (Privileged Access Management) config
-	PAM               *pam.PAMConfig  `json:"pam"`
+	PAM               *pam.PAMConfig   `json:"pam,omitempty"`
 
 	// OpenClaw integration
-	OpenClaw          *OpenClawConfig `json:"openclaw"`
+	OpenClaw          *OpenClawConfig  `json:"openclaw,omitempty"`
 }
 
 type ListenConfig struct {
@@ -42,6 +48,40 @@ type TelegramConfig struct {
 	BotToken      string  `json:"botToken"`
 	AllowedUsers  []int64 `json:"allowedUsers"`
 	WebhookURL    string  `json:"webhookUrl"`
+}
+
+// AuthConfig for authentication settings
+type AuthConfig struct {
+	PluginToken string `json:"pluginToken,omitempty"`
+}
+
+// AuditConfig for audit logging settings
+type AuditConfig struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	LogPath string `json:"logPath,omitempty"`
+}
+
+// RateLimitConfig for rate limiting settings
+type RateLimitConfig struct {
+	Enabled        bool `json:"enabled,omitempty"`
+	RequestsPerMin int  `json:"requestsPerMin,omitempty"`
+}
+
+// WebhookConfig for webhook notification settings
+type WebhookConfig struct {
+	URL    string `json:"url,omitempty"`
+	Secret string `json:"secret,omitempty"`
+}
+
+// RetentionConfig for data retention settings
+type RetentionConfig struct {
+	Days int `json:"days,omitempty"`
+}
+
+// SecurityConfig for security settings
+type SecurityConfig struct {
+	AllowedCommands []string `json:"allowedCommands,omitempty"`
+	RequireReason   bool     `json:"requireReason,omitempty"`
 }
 
 // OpenClawConfig for OpenClaw integration

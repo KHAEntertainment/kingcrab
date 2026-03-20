@@ -127,8 +127,8 @@ install_config() {
     fi
 
     # Copy example config if exists, otherwise create default
-    if [[ -f "./config/config.json" ]]; then
-        cp "./config/config.json" "$CONFIG_DIR/config.json"
+    if [[ -f "./config/config.example.json" ]]; then
+        cp "./config/config.example.json" "$CONFIG_DIR/config.json"
     else
         cat > "$CONFIG_DIR/config.json" <<EOF
 {
@@ -172,18 +172,17 @@ Wants=postgresql.service
 
 [Service]
 Type=simple
-User=$USER
-Group=$GROUP
+User=root
+Group=root
 ExecStart=$INSTALL_DIR/$BINARY_NAME
 Restart=always
 RestartSec=5s
 
 # Security hardening
-NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=$DATA_DIR $LOG_DIR $RUN_DIR
+ReadWritePaths=$DATA_DIR $LOG_DIR $RUN_DIR /var/run
 RuntimeDirectory=kingcrab
 RuntimeDirectoryMode=0755
 
@@ -233,23 +232,31 @@ setup_database() {
         return
     fi
 
+    # Sanitize credentials
+    DB_USER_ESCAPED="${DB_USER//\"/\\\"}"
+    DB_PASSWORD_ESCAPED="${DB_PASSWORD//\'/\'\'}"
+
     # Create database and user if they don't exist
     log_info "Creating database and user..."
 
     if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
         log_warn "Database $DB_NAME already exists"
     else
-        sudo -u postgres createdb -O "$DB_USER" "$DB_NAME" 2>/dev/null || {
+        sudo -u postgres createdb -O "$DB_USER_ESCAPED" "$DB_NAME" 2>/dev/null || {
             # Try creating user first
-            sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
-            sudo -u postgres createdb -O "$DB_USER" "$DB_NAME"
+            sudo -u postgres psql -c "CREATE USER \"$DB_USER_ESCAPED\" WITH PASSWORD '$DB_PASSWORD_ESCAPED';"
+            sudo -u postgres createdb -O "$DB_USER_ESCAPED" "$DB_NAME"
         }
         log_info "Database $DB_NAME created"
     fi
 
-    # Store database password in systemd override
+    # Store database password in systemd override with secure permissions
     mkdir -p "/etc/systemd/system/kingcrab.service.d"
-    cat > "/etc/systemd/system/kingcrab.service.d/database.conf" <<EOF
+    DB_CONF_FILE="/etc/systemd/system/kingcrab.service.d/database.conf"
+
+    # Write to temporary file first
+    TMP_CONF=$(mktemp)
+    cat > "$TMP_CONF" <<EOF
 [Service]
 Environment="KINGCRAB_DB_HOST=$DB_HOST"
 Environment="KINGCRAB_DB_PORT=$DB_PORT"
@@ -258,6 +265,11 @@ Environment="KINGCRAB_DB_USER=$DB_USER"
 Environment="KINGCRAB_DB_PASSWORD=$DB_PASSWORD"
 Environment="KINGCRAB_DB_SSLMODE=require"
 EOF
+
+    # Set secure permissions and move into place
+    chown root:root "$TMP_CONF"
+    chmod 600 "$TMP_CONF"
+    mv "$TMP_CONF" "$DB_CONF_FILE"
 
     systemctl daemon-reload
 

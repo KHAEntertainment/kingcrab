@@ -11,20 +11,14 @@
         "_config_comment": "Plugin-specific configuration",
         "config": {
           "_daemonUrl_comment": "URL of the KingCrab daemon HTTP API",
-          "_use_unix_comment": "For production, use Unix socket: http+unix://%2Fvar%2Frun%2Fkingcrab.sock",
+          "_use_unix_comment": "For production, use Unix socket: unix:///var/run/kingcrab.sock or /var/run/kingcrab.sock",
           "daemonUrl": "http://localhost:8080",
-
-          "_token_comment": "Shared secret for daemon authentication (if enabled)",
-          "daemonToken": "kc_plugin_token_change_me_in_production",
 
           "_timeout_comment": "Request timeout in milliseconds",
           "timeout": 30000,
 
-          "_retry_comment": "Number of retries on connection failure",
-          "maxRetries": 3,
-
-          "_commands_comment": "Default allowed commands for this plugin instance",
-          "_note": "Can be overridden by daemon config",
+          "_commands_comment": "Default allowed commands for this plugin instance (informational only)",
+          "_note": "Actual allowlist is enforced by daemon config",
           "allowedCommands": [
             "apt install *",
             "apt update",
@@ -32,23 +26,17 @@
             "systemctl start *",
             "systemctl stop *",
             "systemctl status *"
-          ],
+          ]
+        },
 
-          "_reason_comment": "Require reason for requests from this plugin",
-          "requireReason": true,
-
-          "_notification_comment": "Notification preferences",
-          "notifications": {
-            "_enabled_comment": "Send Telegram notifications for new requests",
-            "enabled": true,
-            "_userId_comment": "Default Telegram user ID to notify (overrides per-request)",
-            "defaultUserId": null
-          },
-
-          "_webhook_comment": "Webhook URL for daemon to notify plugin of status changes",
-          "webhookUrl": "http://localhost:3000/kingcrab/webhook",
-          "_webhookSecret_comment": "Shared secret for webhook signature validation",
-          "webhookSecret": "webhook_secret_change_me"
+        "_unused_config_comment": "The following settings are NOT currently implemented in plugin/index.ts:",
+        "_unused_config": {
+          "daemonToken": "NOT_IMPLEMENTED",
+          "maxRetries": "NOT_IMPLEMENTED",
+          "requireReason": "NOT_IMPLEMENTED",
+          "notifications": "NOT_IMPLEMENTED",
+          "webhookUrl": "NOT_IMPLEMENTED",
+          "webhookSecret": "NOT_IMPLEMENTED"
         },
 
         "_env_comment": "Environment variables for the plugin",

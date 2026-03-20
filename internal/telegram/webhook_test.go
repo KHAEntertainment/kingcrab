@@ -16,8 +16,9 @@ func TestNewWebhookHandler(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
 	notifyURL := "https://notify.example.com"
+	secretToken := "test-secret"
 
-	handler := NewWebhookHandler(bot, store, notifyURL)
+	handler := NewWebhookHandler(bot, store, notifyURL, secretToken)
 
 	if handler == nil {
 		t.Fatal("Expected handler, got nil")
@@ -39,7 +40,7 @@ func TestNewWebhookHandler(t *testing.T) {
 func TestWebhookHandler_InvalidJSON(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader([]byte("invalid json")))
 	w := httptest.NewRecorder()
@@ -55,7 +56,7 @@ func TestWebhookHandler_InvalidJSON(t *testing.T) {
 func TestWebhookHandler_StartCommand(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	update := Update{
 		UpdateID: 123,
@@ -81,7 +82,7 @@ func TestWebhookHandler_StartCommand(t *testing.T) {
 func TestWebhookHandler_StatusCommand(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	update := Update{
 		UpdateID: 123,
@@ -107,7 +108,7 @@ func TestWebhookHandler_StatusCommand(t *testing.T) {
 func TestWebhookHandler_CallbackQuery_EmptyData(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	update := Update{
 		UpdateID: 123,
@@ -133,7 +134,7 @@ func TestWebhookHandler_CallbackQuery_EmptyData(t *testing.T) {
 func TestWebhookHandler_CallbackQuery_UnknownAction(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	update := Update{
 		UpdateID: 123,
@@ -159,7 +160,7 @@ func TestWebhookHandler_CallbackQuery_UnknownAction(t *testing.T) {
 func TestWebhookHandler_DenyRequest_NotFound(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	update := Update{
 		UpdateID: 123,
@@ -189,7 +190,7 @@ func TestWebhookHandler_DenyRequest_NotFound(t *testing.T) {
 func TestWebhookHandler_DenyRequest_AlreadyProcessed(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	// Create a request that's already approved
 	ctx := context.Background()
@@ -317,7 +318,7 @@ func TestCallbackQuery_Structure(t *testing.T) {
 			Chat:      &Chat{ID: 111},
 		},
 		Data:         "button_data",
-		ChatInstance: 999,
+		ChatInstance: "999",
 	}
 
 	if cq.ID != "callback-123" {
@@ -332,8 +333,8 @@ func TestCallbackQuery_Structure(t *testing.T) {
 		t.Errorf("Expected data 'button_data', got %s", cq.Data)
 	}
 
-	if cq.ChatInstance != 999 {
-		t.Errorf("Expected chat instance 999, got %d", cq.ChatInstance)
+	if cq.ChatInstance != "999" {
+		t.Errorf("Expected chat instance '999', got %s", cq.ChatInstance)
 	}
 }
 
@@ -365,7 +366,7 @@ func TestUser_Structure(t *testing.T) {
 func TestWebhookHandler_EmptyUpdate(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	// Empty update (no message, no callback)
 	update := Update{
@@ -387,7 +388,7 @@ func TestWebhookHandler_EmptyUpdate(t *testing.T) {
 func TestWebhookHandler_StatusCommand_WithPendingRequests(t *testing.T) {
 	bot := NewBot("token", "webhook", "app")
 	store := pam.NewInMemoryRequestStore()
-	handler := NewWebhookHandler(bot, store, "")
+	handler := NewWebhookHandler(bot, store, "", "")
 
 	// Add pending requests
 	ctx := context.Background()

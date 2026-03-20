@@ -279,55 +279,62 @@ Health check endpoint.
 ```json
 {
   "version": "1.0.0",
-  "server": {
-    "host": "127.0.0.1",
-    "port": 8080,
-    "unix_socket": "/var/run/kingcrab/daemon.sock"
+  "listen": {
+    "type": "unix",
+    "path": "/var/run/kingcrab.sock"
   },
-  "database": {
-    "host": "localhost",
-    "port": 5432,
-    "name": "kingcrab",
-    "user": "kingcrab",
-    "ssl_mode": "require",
-    "max_connections": 25
+  "allowedCommands": [
+    "apt install *",
+    "apt update",
+    "systemctl restart *",
+    "systemctl start *",
+    "systemctl stop *"
+  ],
+  "requireReason": true,
+  "logLevel": "info",
+  "telegram": {
+    "botToken": "",
+    "allowedUsers": [],
+    "webhookUrl": ""
   },
-  "security": {
-    "allowed_commands": [
-      "apt install *",
-      "apt update",
-      "systemctl restart *",
-      "systemctl start *",
-      "systemctl stop *"
-    ],
-    "require_reason": true,
-    "request_ttl_minutes": 5,
-    "require_biometric": true,
-    "biometric_storage": "local"
+  "pam": {
+    "use_clawvault": "auto",
+    "clawvault": {
+      "socket": "",
+      "host": "",
+      "token_prefix": "kingcrab/pam/tokens",
+      "timeout_seconds": 5
+    },
+    "fallback": {
+      "encryption_key_env": "PAM_FALLBACK_ENCRYPTION_KEY",
+      "storage_path": "",
+      "ttl_minutes": 5,
+      "authorized_users": []
+    }
   },
-  "notifications": {
-    "enabled": true,
-    "openclaw_webhook": "http://localhost:3000/api/kingcrab/notify"
-  },
-  "logging": {
-    "level": "info",
-    "format": "json",
-    "output": "/var/log/kingcrab/daemon.log"
+  "openclaw": {
+    "webhookUrl": "http://localhost:3000/api/kingcrab/notify",
+    "enabled": true
   }
 }
 ```
+
+**Note:** Database credentials (host, port, name, user) are read from environment variables (`KINGCRAB_DB_*`), not from the config file.
 
 ### Plugin Config: ~/.openclaw/openclaw.json
 
 ```json
 {
-  "extensions": {
-    "kingcrab": {
-      "enabled": true,
-      "daemon_url": "http://localhost:8080",
-      "use_unix_socket": true,
-      "socket_path": "/var/run/kingcrab/daemon.sock",
-      "auto_approve_commands": []
+  "plugins": {
+    "entries": {
+      "kingcrab": {
+        "enabled": true,
+        "config": {
+          "daemonUrl": "http://localhost:8080",
+          "timeout": 30000,
+          "allowedCommands": []
+        }
+      }
     }
   }
 }

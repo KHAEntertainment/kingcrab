@@ -64,13 +64,13 @@ Content-Type: application/json
 
 Check daemon health and version.
 
-**Endpoint:** `GET /health`
+**Endpoint:** `GET /api/v1/health`
 
 **Authentication:** None
 
 **Request:**
 ```http
-GET /health HTTP/1.1
+GET /api/v1/health HTTP/1.1
 ```
 
 **Response (200 OK):**
@@ -87,7 +87,7 @@ GET /health HTTP/1.1
 
 Submit a new privileged command execution request.
 
-**Endpoint:** `POST /request`
+**Endpoint:** `POST /api/v1/request`
 
 **Authentication:** Required (Bearer token)
 
@@ -142,7 +142,7 @@ Authorization: Bearer <token>
 
 Retrieve all requests, optionally filtered by status.
 
-**Endpoint:** `GET /requests`
+**Endpoint:** `GET /api/v1/requests`
 
 **Query Parameters:**
 - `status` (optional): Filter by status (`pending`, `approved`, `denied`, `completed`, `failed`)
@@ -153,7 +153,7 @@ Retrieve all requests, optionally filtered by status.
 
 **Request:**
 ```http
-GET /requests?status=pending&limit=10 HTTP/1.1
+GET /api/v1/requests?status=pending&limit=10 HTTP/1.1
 Authorization: Bearer <token>
 ```
 
@@ -183,13 +183,13 @@ Authorization: Bearer <token>
 
 Retrieve details of a specific request.
 
-**Endpoint:** `GET /request/{id}`
+**Endpoint:** `GET /api/v1/request/{id}`
 
 **Authentication:** Required (Bearer token)
 
 **Request:**
 ```http
-GET /request/550e8400-e29b-41d4-a716-446655440000 HTTP/1.1
+GET /api/v1/request/550e8400-e29b-41d4-a716-446655440000 HTTP/1.1
 Authorization: Bearer <token>
 ```
 
@@ -215,7 +215,7 @@ Authorization: Bearer <token>
 
 Approve a pending request and execute the command.
 
-**Endpoint:** `POST /request/{id}/approve`
+**Endpoint:** `POST /api/v1/request/{id}/approve`
 
 **Authentication:** Required (Bearer token) OR Telegram webhook
 
@@ -261,7 +261,7 @@ Authorization: Bearer <token>
 
 Deny a pending request.
 
-**Endpoint:** `POST /request/{id}/deny`
+**Endpoint:** `POST /api/v1/request/{id}/deny`
 
 **Authentication:** Required (Bearer token) OR Telegram webhook
 
@@ -297,7 +297,7 @@ Authorization: Bearer <token>
 
 Delete a request from the queue (admin only).
 
-**Endpoint:** `DELETE /request/{id}`
+**Endpoint:** `DELETE /api/v1/request/{id}`
 
 **Authentication:** Required (Bearer token with admin scope)
 
@@ -446,7 +446,7 @@ Requested by: agent-session-123
 
 ### Webhook Handler
 
-**Endpoint:** `POST /telegram/webhook`
+**Endpoint:** `POST /api/v1/telegram/webhook`
 
 **Authentication:** Telegram token validation via query param
 

@@ -75,7 +75,9 @@ sudo ./installer/install-v2.sh
 # - Copy binary to /usr/local/bin/kingcrab
 # - Create config directory /etc/kingcrab/
 # - Create systemd service
-# - Run database migrations
+# - Run database migrations (optional - only if requested during setup)
+# Note: On reruns, the installer backs up /etc/kingcrab/config.json and overwrites it.
+# Note: Database migrations are optional; DB setup only runs when requested and will skip SQL execution if the migration file is missing.
 ```
 
 ### 7. Configure Daemon
