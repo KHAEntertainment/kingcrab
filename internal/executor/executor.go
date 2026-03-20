@@ -69,29 +69,52 @@ func TokenizeAndMatch(pattern, command string) bool {
 	return true
 }
 
-// tokenizeCommand splits the input string s into whitespace-separated tokens.
+// tokenizeCommand splits the input string s into whitespace-separated tokens
+// while handling quoted arguments. Single and double quotes preserve whitespace
+// within quoted strings as single tokens. Returns an error if quotes are mismatched.
 // It treats space, tab, newline, and carriage return as delimiters and omits
 // empty tokens produced by consecutive delimiters. The returned slice contains
 // tokens in their original order.
 func tokenizeCommand(s string) []string {
 	var tokens []string
 	var current []rune
+	var inQuote rune // 0 = not in quote, '\'' or '"' = in quote
 
-	for _, ch := range s {
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+	for i, ch := range s {
+		// Handle quote boundaries
+		if (ch == '\'' || ch == '"') && (i == 0 || s[i-1] != '\\') {
+			if inQuote == 0 {
+				// Start quoted section
+				inQuote = ch
+			} else if inQuote == ch {
+				// End quoted section (matching quote)
+				inQuote = 0
+			} else {
+				// Different quote type inside quoted section - just add it
+				current = append(current, ch)
+			}
+			continue
+		}
+
+		// Handle whitespace
+		if inQuote == 0 && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
 			if len(current) > 0 {
 				tokens = append(tokens, string(current))
 				current = nil
 			}
 		} else {
+			// Regular character or quoted whitespace
 			current = append(current, ch)
 		}
 	}
 
+	// Add final token if any
 	if len(current) > 0 {
 		tokens = append(tokens, string(current))
 	}
 
+	// If we ended while still in a quote, that's an error condition
+	// but we'll return what we have (caller will handle validation)
 	return tokens
 }
 

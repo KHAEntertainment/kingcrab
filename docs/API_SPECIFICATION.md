@@ -90,7 +90,7 @@ Submit a new privileged command execution request.
 
 **Endpoint:** `POST /api/v1/request`
 
-**Authentication:** Required (Bearer token)
+**Authentication:** Planned V1: Shared secret via Authorization: Bearer <shared_secret> (not yet enforced; see auth.pluginToken and kingcrab.daemonToken configuration)
 
 **Request Headers:**
 ```http
@@ -150,7 +150,7 @@ Retrieve all requests, optionally filtered by status.
 - `limit` (optional): Maximum number of requests to return (default: 100)
 - `offset` (optional): Pagination offset (default: 0)
 
-**Authentication:** Required (Bearer token)
+**Authentication:** Planned V1: Shared secret via Authorization: Bearer <shared_secret> (not yet enforced; see auth.pluginToken and kingcrab.daemonToken configuration)
 
 **Request:**
 ```http
@@ -186,7 +186,7 @@ Retrieve details of a specific request.
 
 **Endpoint:** `GET /api/v1/request/{id}`
 
-**Authentication:** Required (Bearer token)
+**Authentication:** Planned V1: Shared secret via Authorization: Bearer <shared_secret> (not yet enforced; see auth.pluginToken and kingcrab.daemonToken configuration)
 
 **Request:**
 ```http
@@ -218,7 +218,7 @@ Approve a pending request and execute the command.
 
 **Endpoint:** `POST /api/v1/request/{id}/approve`
 
-**Authentication:** Required (Bearer token) OR Telegram webhook
+**Authentication:** Planned V1: Shared secret via Authorization: Bearer <shared_secret> (not yet enforced; see auth.pluginToken and kingcrab.daemonToken configuration) OR Telegram webhook
 
 **Request Headers (Plugin):**
 ```http
@@ -264,7 +264,7 @@ Deny a pending request.
 
 **Endpoint:** `POST /api/v1/request/{id}/deny`
 
-**Authentication:** Required (Bearer token) OR Telegram webhook
+**Authentication:** Planned V1: Shared secret via Authorization: Bearer <shared_secret> (not yet enforced; see auth.pluginToken and kingcrab.daemonToken configuration) OR Telegram webhook
 
 **Request Headers (Plugin):**
 ```http

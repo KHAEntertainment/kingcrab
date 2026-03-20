@@ -51,9 +51,17 @@ check_prerequisites() {
 
     # Check for Go installation if building from source
     if command -v go &> /dev/null; then
-        log_info "Go $(go version | awk '{print $3}') found"
+        GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
+        GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
+        GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+
+        if [[ "$GO_MAJOR" -gt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -ge 22 ]]; then
+            log_info "Go 1.22+ found (version $GO_VERSION)"
+        else
+            log_warn "Go $GO_VERSION found but 1.22+ required. Please upgrade Go 1.22+ or use pre-built binary"
+        fi
     else
-        log_warn "Go not found. Please install Go 1.21+ or use pre-built binary"
+        log_warn "Go not found. Please install Go 1.22+ or use pre-built binary"
     fi
 
     # Check for PostgreSQL
@@ -288,8 +296,13 @@ EOF
     log_info "Running database migrations..."
     if command -v kingcrab &> /dev/null || [[ -f "$INSTALL_DIR/$BINARY_NAME" ]]; then
         # Use daemon migration command if available
+        # Temporarily disable errexit to capture exit status
+        set +e
         KINGCRAB_DB_HOST="$DB_HOST" KINGCRAB_DB_PORT="$DB_PORT" KINGCRAB_DB_USER="$DB_USER" KINGCRAB_DB_NAME="$DB_NAME" KINGCRAB_DB_PASSWORD="$DB_PASSWORD" "$INSTALL_DIR/$BINARY_NAME" --migrate 2>/dev/null
-        if [[ $? -eq 0 ]]; then
+        MIGRATION_EXIT=$?
+        set -e
+
+        if [[ $MIGRATION_EXIT -eq 0 ]]; then
             log_info "Database migrations completed via daemon"
         else
             log_warn "Migration command failed, falling back to psql"
@@ -365,7 +378,21 @@ perform_upgrade() {
         log_warn "Skipping database migrations. Run manually or service will run them on start."
     fi
 
-    start_service
+    # Restart service to pick up new binary
+    log_info "Restarting KingCrab service..."
+    systemctl restart kingcrab
+
+    # Wait for service to restart
+    sleep 2
+
+    if systemctl is-active --quiet kingcrab; then
+        log_info "KingCrab service restarted successfully"
+    else
+        log_error "Failed to restart KingCrab service"
+        log_error "Check logs with: journalctl -u kingcrab -n 50"
+        exit 1
+    fi
+
     log_info "Upgrade completed successfully"
 }
 

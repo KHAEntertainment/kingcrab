@@ -72,7 +72,14 @@ func NewConnectionFromEnv() (*Connection, error) {
 
 	// If password is not set via env var, try reading from /etc/kingcrab/db.password
 	if password == "" {
-		if data, err := os.ReadFile("/etc/kingcrab/db.password"); err == nil {
+		data, err := os.ReadFile("/etc/kingcrab/db.password")
+		if err != nil {
+			// Only ignore "file not found" errors; surface real read failures
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("read password file: %w", err)
+			}
+			// File doesn't exist, continue without password (will fail later)
+		} else {
 			password = strings.TrimSpace(string(data))
 		}
 	}

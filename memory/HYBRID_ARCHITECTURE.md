@@ -53,10 +53,10 @@ This architecture provides:
 │  │  │   HTTP Server   │  │   Request       │  │    Command          │  │  │
 │  │  │   (API)         │  │   Store         │  │    Executor         │  │  │
 │  │  │                 │  │   (PostgreSQL)  │  │                     │  │  │
-│  │  │  POST /request  │  │                 │  │  - Validate         │  │  │
-│  │  │  GET  /requests │  │  - Requests     │  │  - Execute          │  │  │
-│  │  │  POST /approve  │  │  - Users        │  │  - Log result       │  │  │
-│  │  │  POST /deny     │  │  - Devices      │  │                     │  │  │
+│  │  │  POST /api/v1/request        │  │                 │  │  - Validate         │  │  │
+│  │  │  GET  /api/v1/requests       │  │  - Requests     │  │  - Execute          │  │  │
+│  │  │  POST /api/v1/request/{id}/approve  │  - Users  │  │  - Log result       │  │  │
+│  │  │  POST /api/v1/request/{id}/deny     │  - Devices│  │                     │  │  │
 │  │  │                 │  │  - Audit        │  │                     │  │  │
 │  │  └─────────────────┘  └─────────────────┘  └─────────────────────┘  │  │
 │  │                                                                      │  │
@@ -104,7 +104,7 @@ Agent                   Plugin                  Daemon                  Database
   │                       │                       │                        │
   │ "sudo apt install"    │                       │                        │
   ├─────────────────────▶│                       │                        │
-  │                       │ POST /request         │                        │
+  │                       │ POST /api/v1/request  │                        │
   │                       │ (command, reason)     │                        │
   │                       ├─────────────────────▶│                        │
   │                       │                       │ Validate allowlist     │
@@ -129,7 +129,7 @@ User's Phone             OpenClaw                Plugin                  Daemon
      ├─────────────────────▶│                       │                       │
      │                       │ Callback to plugin    │                       │
      │                       ├─────────────────────▶│                       │
-     │                       │                       │ POST /approve          │
+     │                       │                       │ POST /api/v1/request/{id}/approve │
      │                       │                       │ (request_id, token)    │
      │                       │                       ├─────────────────────▶│
      │                       │                       │                       │
@@ -211,9 +211,8 @@ Create a new elevation request.
 {
   "command": "apt install golang-go",
   "reason": "Need Go for building CLI",
-  "requester": "agent@hostname",
-  "target_system": "prod-server-01",
-  "notify_chat_id": 123456789
+  "requestedBy": "agent@hostname",
+  "telegramUserId": 123456789
 }
 ```
 
@@ -412,8 +411,16 @@ npm run build
 sudo -u postgres createuser kingcrab
 sudo -u postgres createdb -O kingcrab kingcrab
 
+# Run migrations using daemon migration command
+# Set database environment variables
+export KINGCRAB_DB_HOST=localhost
+export KINGCRAB_DB_PORT=5432
+export KINGCRAB_DB_USER=kingcrab
+export KINGCRAB_DB_NAME=kingcrab
+export KINGCRAB_DB_PASSWORD=your_password
+
 # Run migrations
-psql -U kingcrab -d kingcrab -f /usr/local/share/kingcrab/migrations/001_pam_schema.sql
+kingcrab --migrate
 ```
 
 ### 4. Enroll Biometric Device
@@ -569,7 +576,9 @@ psql -U kingcrab -d kingcrab -c "SELECT * FROM elevation_requests;"
 
 3. **Run migrations:**
    ```bash
-   psql -U kingcrab -d kingcrab -f migrations/002_upgrade_to_v2.sql
+   # Set database credentials and run migration command
+   export KINGCRAB_DB_PASSWORD=your_password
+   kingcrab --migrate
    ```
 
 4. **Install new daemon:**

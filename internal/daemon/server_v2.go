@@ -72,7 +72,7 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	}
 
 	// Create API handler
-	apiHandler := api.NewV1Handler(store, exec, notifier, cfg.AllowedCommands)
+	apiHandler := api.NewV1Handler(store, exec, notifier, cfg.AllowedCommands, cfg.RequireReason)
 
 	// Configure allowed origins (default to localhost for now)
 	allowedOrigins := []string{"http://localhost:3000", "http://localhost:8080"}
@@ -107,27 +107,27 @@ func (s *ServerV2) Start() error {
 	// Register API routes
 	s.apiHandler.RegisterRoutes(mux)
 
-	// Register PAM handler for biometric authentication
+	// Register PAM handler for biometric authentication only if Telegram is configured
 	// The PAM handler is a http.Handler that routes /api/pam/* requests
 	var botToken string
 	if s.config.Telegram != nil {
 		botToken = s.config.Telegram.BotToken
 	}
-	if botToken == "" {
-		return fmt.Errorf("telegram.botToken is required but not configured")
+	if botToken != "" {
+		pamHandler := pam.NewHandler(
+			s.pam,
+			s.store,
+			botToken,
+			nil, // allowedUsers - queried from DB
+			s.config.AllowedCommands,
+			5,   // TTL minutes
+		)
+		s.pamHandler = pamHandler
+		mux.Handle("/api/pam/", pamHandler)
+		logger.Info("PAM biometric handler registered at /api/pam/", nil)
+	} else {
+		logger.Info("Telegram botToken not configured, skipping PAM handler registration", nil)
 	}
-
-	pamHandler := pam.NewHandler(
-		s.pam,
-		s.store,
-		botToken,
-		nil, // allowedUsers - queried from DB
-		s.config.AllowedCommands,
-		5,   // TTL minutes
-	)
-	s.pamHandler = pamHandler
-	mux.Handle("/api/pam/", pamHandler)
-	logger.Info("PAM biometric handler registered at /api/pam/", nil)
 
 	// Add middleware
 	handler := s.loggingMiddleware(mux)

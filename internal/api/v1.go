@@ -18,19 +18,21 @@ import (
 
 // V1Handler handles v1 API requests
 type V1Handler struct {
-	store      pam.RequestStore
-	executor   *executor.Executor
-	notifier   *notifications.OpenClawNotifier
-	allowlist  []string
+	store         pam.RequestStore
+	executor      *executor.Executor
+	notifier      *notifications.OpenClawNotifier
+	allowlist     []string
+	requireReason bool
 }
 
-// NewV1Handler creates and returns a V1Handler configured with the provided request store, command executor, OpenClaw notifier, and command allowlist.
-func NewV1Handler(store pam.RequestStore, exec *executor.Executor, notifier *notifications.OpenClawNotifier, allowlist []string) *V1Handler {
+// NewV1Handler creates and returns a V1Handler configured with the provided request store, command executor, OpenClaw notifier, command allowlist, and requireReason flag.
+func NewV1Handler(store pam.RequestStore, exec *executor.Executor, notifier *notifications.OpenClawNotifier, allowlist []string, requireReason bool) *V1Handler {
 	return &V1Handler{
-		store:     store,
-		executor:  exec,
-		notifier:  notifier,
-		allowlist: allowlist,
+		store:         store,
+		executor:      exec,
+		notifier:      notifier,
+		allowlist:     allowlist,
+		requireReason: requireReason,
 	}
 }
 
@@ -85,6 +87,12 @@ func (h *V1Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) 
 	// Validate command
 	if req.Command == "" {
 		respondError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+
+	// Validate reason if required
+	if h.requireReason && req.Reason == "" {
+		respondError(w, http.StatusBadRequest, "reason is required")
 		return
 	}
 

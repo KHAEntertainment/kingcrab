@@ -173,6 +173,7 @@ func Load(path string) (*Config, error) {
 	if port := os.Getenv("KINGCRAB_PORT"); port != "" {
 		if p, err := strconv.Atoi(port); err == nil && p > 0 && p < 65536 {
 			cfg.Port = p
+			cfg.Listen.Port = p
 		}
 	}
 
