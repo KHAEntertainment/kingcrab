@@ -33,7 +33,7 @@ interface ListRequestsParams {
 interface DaemonRequest {
   command: string;
   reason?: string;
-  requester?: string;
+  requestedBy?: string;
 }
 
 interface DaemonResponse {
@@ -55,7 +55,7 @@ interface ListResponse {
     created_at: string;
     expires_at: string;
   }>;
-  count: number;
+  total: number;
 }
 
 // ============================================================================
@@ -206,7 +206,7 @@ export default function (api: any) {
         const result: DaemonResponse = await daemonRequest('/request', 'POST', {
           command,
           reason: reason || 'Requested via OpenClaw agent',
-          requester: callerIdentity,
+          requestedBy: callerIdentity,
         });
 
         if (!result.success) {
@@ -254,7 +254,8 @@ export default function (api: any) {
       const { status = 'pending' } = params;
 
       try {
-        const queryParam = status !== 'all' ? `?status=${status}` : '';
+        // Only send status param when status is 'pending', omit for 'all'
+        const queryParam = status === 'pending' ? '?status=pending' : '';
         const result: ListResponse = await daemonRequest(`/requests${queryParam}`, 'GET');
 
         if (!result.requests || result.requests.length === 0) {
@@ -263,9 +264,15 @@ export default function (api: any) {
           };
         }
 
-        const pending = result.requests.filter(r => r.status === 'pending');
-        const message = `📋 KingCrab Requests\n\nTotal: ${result.count}\nPending: ${pending.length}\n\n${
-          result.requests
+        // Filter locally when needed (server only supports 'pending' filter)
+        let filteredRequests = result.requests;
+        if (status !== 'all' && status !== 'pending') {
+          filteredRequests = result.requests.filter(r => r.status === status);
+        }
+
+        const pending = filteredRequests.filter(r => r.status === 'pending');
+        const message = `📋 KingCrab Requests\n\nTotal: ${result.total}\nPending: ${pending.length}\n\n${
+          filteredRequests
             .map((r) => {
               const shortId = r.id.slice(0, 8);
               const statusEmoji = r.status === 'pending' ? '⏳' : r.status === 'approved' ? '✅' : r.status === 'denied' ? '🚫' : '❓';

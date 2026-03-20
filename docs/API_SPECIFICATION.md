@@ -53,10 +53,11 @@ Content-Type: application/json
 
 ### Telegram Webhook Authentication
 
-**Method:** Telegram-provided query parameter validation
+**Method:** Header-based secret token validation
 
-- Telegram includes `?api_token=<BOT_TOKEN>` on webhook delivery
-- Daemon validates against configured `telegram.botToken`
+- Telegram sends the `X-Telegram-Bot-Api-Secret-Token` HTTP header on webhook delivery
+- The webhook handler in `webhook.go` validates this header value against the configured `telegram.botToken`
+- If the header does not match the configured token, the request is rejected with HTTP 401 Unauthorized
 
 ## Endpoints
 
@@ -426,8 +427,8 @@ Daemon config (`/etc/kingcrab/config.json`):
 Inline button callbacks use this format:
 
 ```
-kc_approve:<request_id>
-kc_deny:<request_id>
+kc_approve_<request_id>
+deny_<request_id>
 ```
 
 ### Message Format
@@ -448,7 +449,7 @@ Requested by: agent-session-123
 
 **Endpoint:** `POST /api/v1/telegram/webhook`
 
-**Authentication:** Telegram token validation via query param
+**Authentication:** Telegram token validation via `X-Telegram-Bot-Api-Secret-Token` header
 
 **Request Body:** Telegram Update object (as per Bot API)
 

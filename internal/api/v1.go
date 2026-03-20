@@ -152,13 +152,12 @@ func (h *V1Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(http.StatusCreated)
 	respondJSON(w, map[string]interface{}{
-		"id":          request.ID,
-		"command":     request.Command,
-		"reason":      request.Reason,
-		"requestedBy": request.Requester,
-		"status":      request.Status,
-		"timestamp":   request.CreatedAt.Format(time.RFC3339),
-		"result":      nil,
+		"success": true,
+		"request": map[string]interface{}{
+			"id":         request.ID,
+			"status":     request.Status,
+			"expires_at": request.ExpiresAt.Format(time.RFC3339),
+		},
 	})
 }
 
@@ -225,11 +224,17 @@ func (h *V1Handler) handleListRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		fmt.Sscanf(offsetStr, "%d", &offset)
+		if offset < 0 {
+			offset = 0
+		}
 	}
 
 	// Apply pagination
 	total := len(requests)
 	start := offset
+	if start < 0 {
+		start = 0
+	}
 	if start > total {
 		start = total
 	}
@@ -382,6 +387,12 @@ func (h *V1Handler) handleApproveOrDeny(w http.ResponseWriter, r *http.Request) 
 		})
 	} else {
 		// Deny request
+		// Validate that approver identity is present
+		if body.UserID == "" {
+			respondError(w, http.StatusBadRequest, "user_id is required for denial")
+			return
+		}
+
 		success, err := h.store.UpdateStateIf(ctx, requestID, "pending", "denied", body.UserID)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to deny request")
@@ -399,6 +410,7 @@ func (h *V1Handler) handleApproveOrDeny(w http.ResponseWriter, r *http.Request) 
 			"request_id": requestID,
 			"command":    request.Command,
 			"reason":     body.Reason,
+			"denied_by":  body.UserID,
 		})
 
 		// Send notification

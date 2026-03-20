@@ -154,32 +154,29 @@ kingcrab/
 │   └── kingcrab/
 │       └── main.go                 # Daemon entrypoint
 ├── internal/
+│   ├── api/
+│   │   └── v1.go                  # API v1 handlers
 │   ├── config/
-│   │   ├── config.go              # Config loading
-│   │   └── defaults.go            # Default values
+│   │   └── config.go              # Config loading
 │   ├── daemon/
-│   │   ├── server.go              # HTTP server
-│   │   └── handlers.go            # Request handlers
+│   │   └── server_v2.go           # HTTP server v2
 │   ├── executor/
 │   │   └── executor.go            # Command execution
-│   ├── database/
+│   ├── db/
 │   │   ├── migrations/
 │   │   │   └── 001_pam_schema.sql
-│   │   ├── db.go                  # Database connection
-│   │   └── store.go               # RequestStore implementation
+│   │   └── db.go                  # Database connection
+│   ├── pam/
+│   │   ├── store_request.go       # RequestStore implementation
+│   │   └── pam.go                 # PAM module
 │   ├── logger/
 │   │   └── logger.go              # Structured logging
-│   ├── notifications/
-│   │   └── openclaw.go            # OpenClaw integration
-│   └── security/
-│       ├── biometric.go           # Biometric token handling
-│       └── allowlist.go           # Command validation
+│   └── notifications/
+│       └── openclaw.go            # OpenClaw integration
 ├── configs/
 │   └── config.json.example        # Example configuration
 ├── installer/
-│   ├── install.sh                 # Installation script
-│   ├── uninstall.sh               # Uninstallation script
-│   └── kingcrab.service           # systemd unit file
+│   └── install-v2.sh              # Installation script v2
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -188,11 +185,10 @@ kingcrab/
 ### Plugin (TypeScript)
 
 ```
-~/.openclaw/extensions/kingcrab/
+plugin/
 ├── package.json
 ├── tsconfig.json
-├── kingcrab-plugin.ts             # Main plugin
-├── plugin-core.ts                 # Plugin core stub (until npm published)
+├── index.ts                       # Main plugin entry point
 ├── types/
 │   └── index.d.ts                 # Type definitions
 ├── SKILL.md                       # OpenClaw skill documentation
@@ -374,7 +370,7 @@ cd kingcrab
 go build -o kingcrab ./cmd/kingcrab
 
 # Run installer (requires sudo)
-sudo ./installer/install.sh
+sudo ./installer/install-v2.sh
 
 # Installer does:
 # - Copy binary to /usr/local/bin/
@@ -578,7 +574,7 @@ psql -U kingcrab -d kingcrab -c "SELECT * FROM elevation_requests;"
 
 4. **Install new daemon:**
    ```bash
-   sudo ./installer/install.sh --upgrade
+   sudo ./installer/install-v2.sh --upgrade
    ```
 
 5. **Migrate plugin:**

@@ -30,6 +30,9 @@ type Config struct {
 	Retention         *RetentionConfig `json:"retention,omitempty"`
 	Security          *SecurityConfig  `json:"security,omitempty"`
 
+	// Database configuration
+	Database          *DatabaseConfig  `json:"database,omitempty"`
+
 	// PAM (Privileged Access Management) config
 	PAM               *pam.PAMConfig   `json:"pam,omitempty"`
 
@@ -82,6 +85,16 @@ type RetentionConfig struct {
 type SecurityConfig struct {
 	AllowedCommands []string `json:"allowedCommands,omitempty"`
 	RequireReason   bool     `json:"requireReason,omitempty"`
+}
+
+// DatabaseConfig for database connection settings
+type DatabaseConfig struct {
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	User        string `json:"user"`
+	PasswordEnv string `json:"passwordEnv"`
+	DBName      string `json:"dbname"`
+	SSLMode     string `json:"sslmode"`
 }
 
 // OpenClawConfig for OpenClaw integration

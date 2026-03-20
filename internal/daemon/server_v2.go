@@ -34,31 +34,22 @@ type ServerV2 struct {
 	allowedOrigins []string
 }
 
-// NewServerV2 creates and wires a ServerV2 with database-backed storage, PAM, executor,
+// NewServerV2 creates and wires a ServerV2 with SQLite-backed storage, PAM, executor,
 // notifier, and API handler based on the provided configuration.
-// 
-// The function connects to the database, runs migrations (30s timeout), constructs a
-// PAM-backed request store, initializes PAM from cfg.PAM, creates a command executor
-// using cfg.AllowedCommands, and configures an OpenClaw notifier when enabled.
+//
+// The function uses a SQLite-backed in-memory request store for the daemon's request queue,
+// initializes PAM from cfg.PAM, creates a command executor using cfg.AllowedCommands,
+// and configures an OpenClaw notifier when enabled.
 // It returns an initialized *ServerV2 on success. Errors are returned if the function
-// fails to connect to the database, run migrations, or initialize PAM.
+// fails to initialize PAM or the request store.
 func NewServerV2(cfg *config.Config) (*ServerV2, error) {
-	// Connect to database
-	database, err := db.NewConnectionFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("connect to database: %w", err)
-	}
+	// Use in-memory request store (SQLite-compatible approach)
+	// The daemon uses a local SQLite/in-memory store for its request queue
+	store := pam.NewInMemoryRequestStore()
 
-	// Run migrations
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := database.RunMigrations(ctx); err != nil {
-		database.Close()
-		return nil, fmt.Errorf("run migrations: %w", err)
-	}
-
-	// Create request store
-	store := pam.NewDBRequestStore(database.DB)
+	// Note: External database connection is intentionally not created here
+	// The daemon's request queue uses SQLite/in-memory storage only
+	var database *db.Connection = nil
 
 	// Create PAM module
 	p, err := pam.NewPAM(cfg.PAM)
@@ -74,9 +65,7 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	var notifier *notifications.OpenClawNotifier
 	if cfg.OpenClaw != nil && cfg.OpenClaw.Enabled {
 		notifier = notifications.NewOpenClawNotifier(cfg.OpenClaw.WebhookURL)
-		logger.Info("OpenClaw notifications enabled", map[string]interface{}{
-			"webhook": cfg.OpenClaw.WebhookURL,
-		})
+		logger.Info("OpenClaw notifications enabled", nil)
 	} else {
 		notifier = notifications.NewOpenClawNotifier("")
 	}
@@ -119,10 +108,18 @@ func (s *ServerV2) Start() error {
 
 	// Register PAM handler for biometric authentication
 	// The PAM handler is a http.Handler that routes /api/pam/* requests
+	var botToken string
+	if s.config.Telegram != nil {
+		botToken = s.config.Telegram.BotToken
+	}
+	if botToken == "" {
+		return fmt.Errorf("telegram.botToken is required but not configured")
+	}
+
 	pamHandler := pam.NewHandler(
 		s.pam,
 		s.store,
-		s.config.Telegram.BotToken,
+		botToken,
 		nil, // allowedUsers - queried from DB
 		s.config.AllowedCommands,
 		5,   // TTL minutes

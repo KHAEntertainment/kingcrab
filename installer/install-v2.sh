@@ -79,7 +79,7 @@ create_user() {
     if id "$USER" &>/dev/null; then
         log_warn "User $USER already exists"
     else
-        useradd -r -s /bin/false -d "$DATA_DIR" -M "$USER"
+        useradd -r -U -s /bin/false -d "$DATA_DIR" -M "$USER"
         log_info "User $USER created"
     fi
 }
@@ -286,9 +286,23 @@ EOF
 
     # Run migrations
     log_info "Running database migrations..."
-    if [[ -f "./internal/db/migrations/001_pam_schema.sql" ]]; then
+    if command -v kingcrab &> /dev/null || [[ -f "$INSTALL_DIR/$BINARY_NAME" ]]; then
+        # Use daemon migration command if available
+        KINGCRAB_DB_HOST="$DB_HOST" KINGCRAB_DB_PORT="$DB_PORT" KINGCRAB_DB_USER="$DB_USER" KINGCRAB_DB_NAME="$DB_NAME" KINGCRAB_DB_PASSWORD="$DB_PASSWORD" "$INSTALL_DIR/$BINARY_NAME" --migrate 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            log_info "Database migrations completed via daemon"
+        else
+            log_warn "Migration command failed, falling back to psql"
+            if [[ -f "./internal/db/migrations/001_pam_schema.sql" ]]; then
+                PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "./internal/db/migrations/001_pam_schema.sql"
+                log_info "Database migrations completed via psql"
+            else
+                log_warn "Migration file not found. Daemon will run migrations on first start."
+            fi
+        fi
+    elif [[ -f "./internal/db/migrations/001_pam_schema.sql" ]]; then
         PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "./internal/db/migrations/001_pam_schema.sql"
-        log_info "Database migrations completed"
+        log_info "Database migrations completed via psql"
     else
         log_warn "Migration file not found. Daemon will run migrations on first start."
     fi
@@ -337,13 +351,49 @@ print_success() {
     echo ""
 }
 
+# perform_upgrade runs the upgrade workflow: installs the new binary, runs database migrations, restarts the service, and logs completion.
+perform_upgrade() {
+    log_info "Running upgrade workflow..."
+
+    install_binary
+
+    # Prompt for database migration
+    read -p "Run database migrations now? [y/N]: " RUN_MIGRATIONS
+    if [[ "$RUN_MIGRATIONS" =~ ^[Yy]$ ]]; then
+        setup_database
+    else
+        log_warn "Skipping database migrations. Run manually or service will run them on start."
+    fi
+
+    start_service
+    log_info "Upgrade completed successfully"
+}
+
 # main runs the full installation workflow for the KingCrab daemon: performs preflight checks, creates the system user and directories, installs the binary and configuration, writes the systemd service, optionally sets up the database interactively, starts and enables the service, and prints completion instructions.
 main() {
     log_info "KingCrab v${VERSION} Installer"
     echo ""
 
+    # Parse arguments for upgrade mode
+    UPGRADE=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--upgrade" || "$arg" == "-u" ]]; then
+            UPGRADE=true
+            break
+        fi
+    done
+
     check_root
     check_prerequisites
+
+    if [[ "$UPGRADE" == "true" ]]; then
+        log_info "Running in upgrade mode"
+        perform_upgrade
+        print_success
+        return
+    fi
+
+    # Fresh install workflow
     create_user
     create_directories
     install_binary

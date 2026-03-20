@@ -182,10 +182,21 @@ func (e *Executor) Execute(command string) (*ExecuteResult, error) {
 		cmd = exec.CommandContext(ctx, argv[0], argv[1:]...)
 	}
 
-	output, err := cmd.CombinedOutput()
+	// Create buffers to capture stdout and stderr separately
+	var stdoutBuf, stderrBuf []byte
+	var stdoutBuilder, stderrBuilder strings.Builder
+	cmd.Stdout = &stdoutBuilder
+	cmd.Stderr = &stderrBuilder
+
+	err := cmd.Run()
 	durationMs := time.Since(start).Milliseconds()
 
+	stdoutBuf = []byte(stdoutBuilder.String())
+	stderrBuf = []byte(stderrBuilder.String())
+
 	result := &ExecuteResult{
+		Stdout:   string(stdoutBuf),
+		Stderr:   string(stderrBuf),
 		Duration: durationMs,
 	}
 
@@ -194,7 +205,6 @@ func (e *Executor) Execute(command string) (*ExecuteResult, error) {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
 		}
-		result.Stdout = string(output)
 		logger.Error("Command execution failed", map[string]interface{}{
 			"command": command,
 			"error":   err.Error(),
@@ -203,7 +213,6 @@ func (e *Executor) Execute(command string) (*ExecuteResult, error) {
 	}
 
 	result.ExitCode = 0
-	result.Stdout = string(output)
 	logger.Info("Command executed", map[string]interface{}{
 		"command":     command,
 		"duration_ms": durationMs,
