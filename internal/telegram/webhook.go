@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/KHAEntertainment/kingcrab/internal/pam"
 )
+
+// maxBodyBytes is the maximum allowed webhook request body size (1 MiB).
+const maxBodyBytes = 1 << 20
 
 // WebhookHandler handles Telegram webhook callbacks
 type WebhookHandler struct {
@@ -42,7 +46,7 @@ func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var update Update
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes)).Decode(&update); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

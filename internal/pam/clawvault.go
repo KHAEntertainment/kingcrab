@@ -239,7 +239,16 @@ func (s *ClawVaultTokenStore) Store(ctx context.Context, userID string, token To
 func (s *ClawVaultTokenStore) Retrieve(ctx context.Context, userID string) (*Token, error) {
 	key := fmt.Sprintf("%s/%s", s.prefix, sanitizeUserID(userID))
 
-	// Try secret-tool lookup first (direct keyring access)
+	// Check existence first before attempting retrieval
+	found, err := s.client.SearchSecret(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for secret in clawvault: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+
+	// Secret exists — try direct keyring lookup, fall back to clawvault resolve on error
 	data, err := s.client.LookupSecret(ctx, key)
 	if err != nil {
 		// Fall back to clawvault resolve
