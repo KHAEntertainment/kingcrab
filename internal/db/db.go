@@ -68,7 +68,7 @@ func NewConnectionFromEnv() (*Connection, error) {
 		User:     getEnv("KINGCRAB_DB_USER", "kingcrab"),
 		Password: os.Getenv("KINGCRAB_DB_PASSWORD"),
 		DBName:   getEnv("KINGCRAB_DB_NAME", "kingcrab"),
-		SSLMode:  getEnv("KINGCRAB_DB_SSLMODE", "require"), // Production should use encrypted connections; override via KINGCRAB_DB_SSLMODE
+		SSLMode:  getEnv("KINGCRAB_DB_SSLMODE", "prefer"), // Use "require" in production
 	}
 
 	if cfg.Password == "" {
