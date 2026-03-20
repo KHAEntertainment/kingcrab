@@ -116,15 +116,19 @@ func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedS
 		}
 		result, err = s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
 	} else {
-		// For non-approved terminal states (denied/failed), set approved_at to NOW() for cleanup eligibility
-		// approved_by remains NULL as these states are not approvals
+		// For non-approved terminal states (denied/failed), record the denier/actor in approved_by
+		// and set approved_at to NOW() for cleanup eligibility
 		// Also reject expired requests in the same transaction
 		query = `
 			UPDATE elevation_requests
-			SET status = $2, approved_by = NULL, approved_at = NOW()
+			SET status = $2, approved_by = $4, approved_at = NOW()
 			WHERE id = $1 AND status = $3 AND expires_at > NOW()
 		`
-		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState)
+		var approvedByPtr *string
+		if approvedBy != "" {
+			approvedByPtr = &approvedBy
+		}
+		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState, approvedByPtr)
 	}
 
 	if err != nil {

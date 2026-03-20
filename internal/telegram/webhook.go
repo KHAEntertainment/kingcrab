@@ -1,10 +1,13 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/KHAEntertainment/kingcrab/internal/pam"
 )
@@ -124,13 +127,18 @@ func (h *WebhookHandler) handleDeny(ctx context.Context, cq *CallbackQuery, requ
 
 	// Update message if available
 	if cq.Message != nil && cq.Message.Chat != nil {
-		msg := h.bot.BuildApprovalResultMessage(toElevationRequest(req), false, cq.From.Username)
+		// Compute approver string with fallback for display
+		approver := cq.From.Username
+		if approver == "" {
+			approver = fmt.Sprintf("tg:%d", cq.From.ID)
+		}
+		msg := h.bot.BuildApprovalResultMessage(toElevationRequest(req), false, approver)
 		h.bot.EditMessageText(ctx, cq.Message.Chat.ID, cq.Message.MessageID, msg, nil)
 	}
 
 	// Notify external system if configured
 	if h.notifyURL != "" {
-		go h.notifyExternal(ctx, req.ID, "denied", "")
+		go h.notifyExternal(ctx, req.ID, "denied", username)
 	}
 }
 
@@ -163,9 +171,74 @@ func (h *WebhookHandler) handleStatus(ctx context.Context, chatID int64) {
 
 // notifyExternal notifies an external system of status change
 func (h *WebhookHandler) notifyExternal(ctx context.Context, requestID, status, approver string) {
-	// Simple POST to notify URL
-	// In production, would use proper HTTP client with retries
-	fmt.Printf("Notify external: %s %s %s\n", h.notifyURL, requestID, status)
+	// Build JSON payload
+	payload := map[string]interface{}{
+		"request_id": requestID,
+		"status":     status,
+		"approver":   approver,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Failed to marshal notification payload: %v", err)
+		return
+	}
+
+	// Retry logic: 3 attempts with exponential backoff
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Create context with 5 second timeout for each attempt
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+		// Create HTTP request
+		req, err := http.NewRequestWithContext(reqCtx, "POST", h.notifyURL, bytes.NewReader(payloadBytes))
+		if err != nil {
+			log.Printf("Failed to create notification request (attempt %d/%d): %v", attempt, maxRetries, err)
+			cancel()
+			continue
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		// Execute request
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		cancel() // Always cancel context after request
+
+		if err != nil {
+			log.Printf("Failed to send notification (attempt %d/%d): %v", attempt, maxRetries, err)
+			if attempt < maxRetries {
+				// Exponential backoff: 100ms, 200ms, 400ms
+				backoff := time.Duration(100*(1<<uint(attempt-1))) * time.Millisecond
+				time.Sleep(backoff)
+				continue
+			}
+			return
+		}
+
+		resp.Body.Close()
+
+		// Check response status
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("Successfully notified external system: %s - %s", requestID, status)
+			return
+		}
+
+		log.Printf("External notification returned status %d (attempt %d/%d)", resp.StatusCode, attempt, maxRetries)
+
+		// Retry on 5xx errors, fail on 4xx
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			log.Printf("External notification failed with client error %d, not retrying", resp.StatusCode)
+			return
+		}
+
+		if attempt < maxRetries {
+			backoff := time.Duration(100*(1<<uint(attempt-1))) * time.Millisecond
+			time.Sleep(backoff)
+		}
+	}
+
+	log.Printf("Failed to notify external system after %d attempts", maxRetries)
 }
 
 // toElevationRequest converts internal request to bot request

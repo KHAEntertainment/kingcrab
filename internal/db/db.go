@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -97,94 +99,99 @@ func (c *Connection) Close() error {
 	return c.DB.Close()
 }
 
-// RunMigrations runs the database migrations
+// RunMigrations runs the database migrations from the SQL file
 func (c *Connection) RunMigrations(ctx context.Context) error {
-	migrations := []string{
-		// Enable UUID extension
-		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
+	// Find the migrations directory relative to this file
+	// This works in both development and deployed environments
+	migrationsPath := filepath.Join("internal", "db", "migrations", "001_pam_schema.sql")
 
-		// authorized_users
-		`CREATE TABLE IF NOT EXISTS authorized_users (
-			id SERIAL PRIMARY KEY,
-			telegram_id BIGINT UNIQUE,
-			clawvault_id VARCHAR(255) UNIQUE,
-			username VARCHAR(255),
-			display_name VARCHAR(255),
-			auth_mode VARCHAR(20) DEFAULT 'biometric',
-			is_active BOOLEAN DEFAULT TRUE,
-			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			CONSTRAINT one_identity CHECK (
-				(telegram_id IS NOT NULL) OR (clawvault_id IS NOT NULL)
-			)
-		)`,
-
-		// enrolled_devices
-		`CREATE TABLE IF NOT EXISTS enrolled_devices (
-			id SERIAL PRIMARY KEY,
-			user_id INTEGER NOT NULL REFERENCES authorized_users(id) ON DELETE CASCADE,
-			token_ref VARCHAR(512),
-			token_storage VARCHAR(20) DEFAULT 'local',
-			device_info VARCHAR(255),
-			device_hash VARCHAR(64),
-			is_active BOOLEAN DEFAULT TRUE,
-			enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			last_used_at TIMESTAMP WITH TIME ZONE,
-			expires_at TIMESTAMP WITH TIME ZONE
-		)`,
-
-		// elevation_requests
-		`CREATE TABLE IF NOT EXISTS elevation_requests (
-			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-			requester VARCHAR(255) NOT NULL,
-			target_system VARCHAR(255) NOT NULL,
-			command TEXT NOT NULL,
-			reason TEXT,
-			status VARCHAR(20) DEFAULT 'pending',
-			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-			approved_at TIMESTAMP WITH TIME ZONE,
-			executed_at TIMESTAMP WITH TIME ZONE,
-			approved_by TEXT,
-			ip_address VARCHAR(45),
-			user_agent VARCHAR(512),
-			output TEXT,
-			exit_code INTEGER
-		)`,
-
-		// approval_audit
-		`CREATE TABLE IF NOT EXISTS approval_audit (
-			id SERIAL PRIMARY KEY,
-			request_id UUID REFERENCES elevation_requests(id) ON DELETE SET NULL,
-			device_id INTEGER REFERENCES enrolled_devices(id) ON DELETE SET NULL,
-			user_id INTEGER REFERENCES authorized_users(id) ON DELETE SET NULL,
-			action VARCHAR(30) NOT NULL,
-			ip_address VARCHAR(45),
-			user_agent VARCHAR(512),
-			details JSONB,
-			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-		)`,
-
-		// Indexes
-		`CREATE INDEX IF NOT EXISTS idx_users_telegram ON authorized_users(telegram_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_users_clawvault ON authorized_users(clawvault_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_users_active ON authorized_users(is_active)`,
-		`CREATE INDEX IF NOT EXISTS idx_devices_user ON enrolled_devices(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_devices_active ON enrolled_devices(is_active)`,
-		`CREATE INDEX IF NOT EXISTS idx_requests_status ON elevation_requests(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_requests_created ON elevation_requests(created_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_requests_expires ON elevation_requests(expires_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_request ON approval_audit(request_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_created ON approval_audit(created_at)`,
+	// Read the migration SQL file
+	sqlBytes, err := os.ReadFile(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("read migration file: %w", err)
 	}
 
-	for _, m := range migrations {
-		if _, err := c.ExecContext(ctx, m); err != nil {
-			return fmt.Errorf("migration failed: %w", err)
+	sqlContent := string(sqlBytes)
+
+	// Split into individual statements (simple approach: split on semicolon + newline)
+	// This handles most SQL statements but may need refinement for complex cases
+	statements := splitSQLStatements(sqlContent)
+
+	// Execute each statement
+	for i, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+
+		// Skip comments
+		if strings.HasPrefix(stmt, "--") {
+			continue
+		}
+
+		if _, err := c.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migration statement %d failed: %w\nStatement: %s", i+1, err, stmt[:min(100, len(stmt))])
 		}
 	}
 
 	return nil
+}
+
+// splitSQLStatements splits SQL content into individual statements
+func splitSQLStatements(sql string) []string {
+	var statements []string
+	var current strings.Builder
+	var inFunction bool
+
+	lines := strings.Split(sql, "\n")
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+
+		// Track if we're inside a function definition
+		if strings.Contains(strings.ToUpper(trimmed), "CREATE OR REPLACE FUNCTION") ||
+			strings.Contains(strings.ToUpper(trimmed), "CREATE FUNCTION") {
+			inFunction = true
+		}
+
+		current.WriteString(line)
+		current.WriteString("\n")
+
+		// End of function
+		if inFunction && strings.Contains(trimmed, "$$") && strings.Count(current.String(), "$$")%2 == 0 {
+			// Check if this is the closing $$
+			afterDollar := strings.TrimSpace(strings.Split(trimmed, "$$")[len(strings.Split(trimmed, "$$"))-1])
+			if strings.HasSuffix(afterDollar, ";") || afterDollar == "" {
+				inFunction = false
+				statements = append(statements, current.String())
+				current.Reset()
+			}
+		} else if !inFunction && strings.HasSuffix(trimmed, ";") {
+			// Regular statement end
+			statements = append(statements, current.String())
+			current.Reset()
+		}
+	}
+
+	// Add any remaining content
+	if current.Len() > 0 {
+		statements = append(statements, current.String())
+	}
+
+	return statements
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Ping tests the database connection

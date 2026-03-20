@@ -36,7 +36,11 @@ type ClawVaultSecret struct {
 
 // ListSecrets lists all stored secrets (metadata only)
 func (c *ClawVaultClient) ListSecrets(ctx context.Context) ([]ClawVaultSecret, error) {
-	cmd := exec.CommandContext(ctx, "clawvault", "list", "--json")
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timedCtx, "clawvault", "list", "--json")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -59,8 +63,12 @@ func (c *ClawVaultClient) ListSecrets(ctx context.Context) ([]ClawVaultSecret, e
 // Note: clawvault doesn't have a non-interactive get command, so we use a workaround
 // This requires clawvault to be configured with the exec-provider pattern
 func (c *ClawVaultClient) GetSecret(ctx context.Context, key string) (string, error) {
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	// Try using clawvault resolve (exec-provider pattern)
-	cmd := exec.CommandContext(ctx, "clawvault", "resolve", key)
+	cmd := exec.CommandContext(timedCtx, "clawvault", "resolve", key)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -84,9 +92,13 @@ func (c *ClawVaultClient) GetSecret(ctx context.Context, key string) (string, er
 // SetSecret stores a secret (interactive, requires stdin)
 // For non-interactive use, we store directly to keyring via secret-tool
 func (c *ClawVaultClient) SetSecret(ctx context.Context, key, value string) error {
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
 	// Use secret-tool directly (what clawvault uses under the hood)
 	// This avoids the interactive prompt
-	cmd := exec.CommandContext(ctx, "secret-tool", "store",
+	cmd := exec.CommandContext(timedCtx, "secret-tool", "store",
 		"--label", fmt.Sprintf("KingCrab: %s", key),
 		"kingcrab", key)
 
@@ -112,8 +124,11 @@ func (c *ClawVaultClient) SetSecret(ctx context.Context, key, value string) erro
 
 // DeleteSecret removes a secret
 func (c *ClawVaultClient) DeleteSecret(ctx context.Context, key string) error {
-	cmd := exec.CommandContext(ctx, "secret-tool", "clear", "kingcrab", key)
-	
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timedCtx, "secret-tool", "clear", "kingcrab", key)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -127,7 +142,11 @@ func (c *ClawVaultClient) DeleteSecret(ctx context.Context, key string) error {
 
 // LookupSecret retrieves a secret value directly from keyring
 func (c *ClawVaultClient) LookupSecret(ctx context.Context, key string) (string, error) {
-	cmd := exec.CommandContext(ctx, "secret-tool", "lookup", "kingcrab", key)
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(timedCtx, "secret-tool", "lookup", "kingcrab", key)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -142,8 +161,11 @@ func (c *ClawVaultClient) LookupSecret(ctx context.Context, key string) (string,
 
 // SearchSecret checks if a secret exists
 func (c *ClawVaultClient) SearchSecret(ctx context.Context, key string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "secret-tool", "search", "kingcrab", key)
+	// Apply configured timeout to the context
+	timedCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
+	cmd := exec.CommandContext(timedCtx, "secret-tool", "search", "kingcrab", key)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
