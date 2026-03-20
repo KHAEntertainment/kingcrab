@@ -423,40 +423,12 @@ func (h *V1Handler) handleApproveOrDeny(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// isCommandAllowed checks if a command matches the allowlist
+// isCommandAllowed checks if a command matches the allowlist using the same
+// validation logic as the executor to ensure consistency
 func (h *V1Handler) isCommandAllowed(command string) bool {
-	for _, pattern := range h.allowlist {
-		if matchCommand(pattern, command) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchCommand reports whether command matches pattern.
-// The pattern can be:
-// - "*" to match any command,
-// - an exact string to match exactly, or
-// - a string ending with "*" to match any command that starts with the prefix before the trailing "*".
-//
-// It returns true when the command matches the pattern, false otherwise.
-func matchCommand(pattern, command string) bool {
-	if pattern == "*" {
-		return true
-	}
-	if pattern == command {
-		return true
-	}
-
-	// Simple wildcard matching
-	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
-		prefix := pattern[:len(pattern)-1]
-		if len(command) >= len(prefix) && command[:len(prefix)] == prefix {
-			return true
-		}
-	}
-
-	return false
+	// Use the executor's IsAllowed method which uses TokenizeAndMatch
+	// to ensure submission and execution use identical validation
+	return h.executor.IsAllowed(command)
 }
 
 // respondJSON writes data as JSON to the provided http.ResponseWriter and sets the Content-Type header to "application/json".

@@ -153,9 +153,11 @@ type NotificationRequest struct {
 // truncateOutput truncates s to at most maxLen characters, appending "..." when truncation occurs.
 // It returns s unchanged when its length is less than or equal to maxLen; otherwise it returns the
 // first maxLen characters followed by "...".
+// The function operates on runes to ensure it doesn't split multi-byte UTF-8 characters.
 func truncateOutput(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	rs := []rune(s)
+	if len(rs) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(rs[:maxLen]) + "..."
 }

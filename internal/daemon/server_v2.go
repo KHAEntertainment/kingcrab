@@ -32,6 +32,7 @@ type ServerV2 struct {
 	pamHandler     *pam.Handler
 	httpServer     *http.Server
 	allowedOrigins []string
+	cleanupCancel  context.CancelFunc
 }
 
 // NewServerV2 creates and wires a ServerV2 with SQLite-backed storage, PAM, executor,
@@ -54,7 +55,7 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 	// Create PAM module
 	p, err := pam.NewPAM(cfg.PAM)
 	if err != nil {
-		database.Close()
+		// No database to close since we use in-memory storage
 		return nil, fmt.Errorf("initialize PAM: %w", err)
 	}
 
@@ -146,6 +147,11 @@ func (s *ServerV2) Start() error {
 		"type":    s.config.Listen.Type,
 	})
 
+	// Start cleanup goroutine for expired requests
+	cleanupCtx, cancel := context.WithCancel(context.Background())
+	s.cleanupCancel = cancel
+	go s.cleanupOldRequests(cleanupCtx)
+
 	if s.config.Listen.Type == "unix" {
 		listener, err := net.Listen("unix", s.config.Listen.Path)
 		if err != nil {
@@ -166,6 +172,11 @@ func (s *ServerV2) Start() error {
 // Stop stops the server gracefully
 func (s *ServerV2) Stop(ctx context.Context) error {
 	logger.Info("Stopping KingCrab server", nil)
+
+	// Stop cleanup goroutine
+	if s.cleanupCancel != nil {
+		s.cleanupCancel()
+	}
 
 	if s.httpServer != nil {
 		if err := s.httpServer.Shutdown(ctx); err != nil {
@@ -276,9 +287,30 @@ func (s *ServerV2) cleanupOldRequests(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// TODO: Implement cleanup logic
-			logger.Info("Running cleanup of old requests", nil)
+			s.performCleanup(ctx)
 		}
+	}
+}
+
+// performCleanup executes the actual cleanup logic
+func (s *ServerV2) performCleanup(ctx context.Context) {
+	logger.Info("Running cleanup of old requests", nil)
+
+	// Expire old pending requests that have passed their expiration time
+	expiredCount, err := s.store.ExpireOldRequests(ctx)
+	if err != nil {
+		logger.Error("Failed to expire old requests", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if expiredCount > 0 {
+		logger.Info("Expired old requests", map[string]interface{}{
+			"count": expiredCount,
+		})
+	} else {
+		logger.Info("No expired requests found", nil)
 	}
 }
 

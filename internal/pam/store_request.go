@@ -16,6 +16,7 @@ type RequestStore interface {
 	UpdateStateIf(ctx context.Context, id string, expectedState string, newState string, approvedBy string) (bool, error)
 	ListPending(ctx context.Context) ([]*ElevationRequest, error)
 	Delete(ctx context.Context, id string) error
+	ExpireOldRequests(ctx context.Context) (int, error)
 }
 
 // ElevationRequest represents an elevation request
@@ -190,6 +191,28 @@ func (s *InMemoryRequestStore) Delete(ctx context.Context, id string) error {
 	defer s.mu.Unlock()
 	delete(s.requests, id)
 	return nil
+}
+
+// ExpireOldRequests marks all expired pending requests as expired
+func (s *InMemoryRequestStore) ExpireOldRequests(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	expiredCount := 0
+
+	for id, req := range s.requests {
+		// Only expire requests that are still pending and past their expiration time
+		if req.Status == "pending" && now.After(req.ExpiresAt) {
+			// Create a copy and update its status
+			reqCopy := deepCopyElevationRequest(req)
+			reqCopy.Status = "expired"
+			s.requests[id] = reqCopy
+			expiredCount++
+		}
+	}
+
+	return expiredCount, nil
 }
 
 // Compile-time check

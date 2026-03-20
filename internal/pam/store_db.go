@@ -211,6 +211,26 @@ func (s *DBRequestStore) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// ExpireOldRequests marks all expired pending requests as expired
+func (s *DBRequestStore) ExpireOldRequests(ctx context.Context) (int, error) {
+	query := `
+		UPDATE elevation_requests
+		SET status = 'expired'
+		WHERE status = 'pending' AND expires_at <= NOW()
+	`
+	result, err := s.db.ExecContext(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(rowsAffected), nil
+}
+
 // LogAudit logs an approval action
 func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID *string, deviceID *int, userID *int, ipAddress, userAgent string, details map[string]interface{}) error {
 	detailsJSON, err := json.Marshal(details)
