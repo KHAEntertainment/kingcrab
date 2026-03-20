@@ -76,30 +76,33 @@ CREATE INDEX IF NOT EXISTS idx_devices_hash ON enrolled_devices(device_hash);
 -- The actual elevation requests
 CREATE TABLE IF NOT EXISTS elevation_requests (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
+
     -- Request details
     requester       VARCHAR(255) NOT NULL,          -- Who requested
     target_system   VARCHAR(255) NOT NULL,          -- Target server/system
     command         TEXT NOT NULL,                  -- Command to execute
     reason          TEXT,                           -- Justification
-    
+
     -- Status tracking
-    status          VARCHAR(20) DEFAULT 'pending' 
+    status          VARCHAR(20) DEFAULT 'pending'
                     CHECK (status IN ('pending', 'approved', 'denied', 'expired', 'executing', 'failed')),
-    
+
     -- Timing
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     expires_at      TIMESTAMP WITH TIME ZONE NOT NULL,
     approved_at     TIMESTAMP WITH TIME ZONE,
     executed_at     TIMESTAMP WITH TIME ZONE,
-    
+
     -- Approval info
     approved_by     TEXT,                     -- User identity string (e.g., "tg:12345")
-    
+
     -- Network info (for audit)
     ip_address      VARCHAR(45),                    -- IPv6 compatible
     user_agent      VARCHAR(512),
-    
+
+    -- Telegram notification
+    notify_chat_id  BIGINT,                         -- Telegram chat ID for notifications
+
     -- Result
     output          TEXT,
     exit_code       INTEGER

@@ -24,12 +24,12 @@ func NewDBRequestStore(db *sql.DB) *DBRequestStore {
 func (s *DBRequestStore) Create(ctx context.Context, req *ElevationRequest) error {
 	query := `
 		INSERT INTO elevation_requests
-		(id, requester, target_system, command, reason, status, created_at, expires_at, ip_address, user_agent)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		(id, requester, target_system, command, reason, status, created_at, expires_at, ip_address, user_agent, notify_chat_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 	_, err := s.db.ExecContext(ctx, query,
 		req.ID, req.Requester, req.TargetSystem, req.Command, req.Reason,
-		req.Status, req.CreatedAt, req.ExpiresAt, req.IPAddress, req.UserAgent,
+		req.Status, req.CreatedAt, req.ExpiresAt, req.IPAddress, req.UserAgent, req.NotifyChatID,
 	)
 	return err
 }
@@ -39,7 +39,7 @@ func (s *DBRequestStore) Get(ctx context.Context, id string) (*ElevationRequest,
 	query := `
 		SELECT id, requester, target_system, command, reason, status,
 		       created_at, expires_at, approved_by, approved_at,
-		       ip_address, user_agent
+		       ip_address, user_agent, notify_chat_id
 		FROM elevation_requests WHERE id = $1
 	`
 	var req ElevationRequest
@@ -49,7 +49,7 @@ func (s *DBRequestStore) Get(ctx context.Context, id string) (*ElevationRequest,
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&req.ID, &req.Requester, &req.TargetSystem, &req.Command, &req.Reason,
 		&req.Status, &req.CreatedAt, &req.ExpiresAt, &approvedBy, &approvedAt,
-		&req.IPAddress, &req.UserAgent,
+		&req.IPAddress, &req.UserAgent, &req.NotifyChatID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -143,7 +143,7 @@ func (s *DBRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, 
 	query := `
 		SELECT id, requester, target_system, command, reason, status,
 		       created_at, expires_at, approved_by, approved_at,
-		       ip_address, user_agent
+		       ip_address, user_agent, notify_chat_id
 		FROM elevation_requests
 		WHERE status = 'pending' AND expires_at > NOW()
 		ORDER BY created_at DESC
@@ -163,7 +163,7 @@ func (s *DBRequestStore) ListPending(ctx context.Context) ([]*ElevationRequest, 
 		err := rows.Scan(
 			&req.ID, &req.Requester, &req.TargetSystem, &req.Command, &req.Reason,
 			&req.Status, &req.CreatedAt, &req.ExpiresAt, &approvedBy, &approvedAt,
-			&req.IPAddress, &req.UserAgent,
+			&req.IPAddress, &req.UserAgent, &req.NotifyChatID,
 		)
 		if err != nil {
 			return nil, err

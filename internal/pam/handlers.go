@@ -271,7 +271,11 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
 		// Try to atomically set to expired if still pending
-		h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		_, err := h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		if err != nil {
+			// Log the error but still return expired response
+			fmt.Printf("failed to mark request %s as expired: %v\n", pending.ID, err)
+		}
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
@@ -366,7 +370,11 @@ func (h *Handler) handleDeny(w http.ResponseWriter, r *http.Request) {
 	// Check expiration
 	if time.Now().After(pending.ExpiresAt) {
 		// Try to atomically set to expired if still pending
-		h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		_, err := h.requestStore.UpdateStateIf(ctx, pending.ID, "pending", "expired", "")
+		if err != nil {
+			// Log the error but still return expired response
+			fmt.Printf("failed to mark request %s as expired: %v\n", pending.ID, err)
+		}
 		h.respondError(w, http.StatusGone, "request expired")
 		return
 	}
