@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -32,10 +33,16 @@ type Connection struct {
 
 // NewConnection creates a new database connection
 func NewConnection(cfg Config) (*Connection, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode,
-	)
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(cfg.User, cfg.Password),
+		Host:   fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Path:   "/" + cfg.DBName,
+	}
+	q := url.Values{}
+	q.Set("sslmode", cfg.SSLMode)
+	u.RawQuery = q.Encode()
+	dsn := u.String()
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -116,7 +123,13 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 	// This handles most SQL statements but may need refinement for complex cases
 	statements := splitSQLStatements(sqlContent)
 
-	// Execute each statement
+	// Execute each statement inside a single transaction for atomicity
+	tx, err := c.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit; ensures rollback if we return early on error
+
 	for i, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
@@ -128,9 +141,13 @@ func (c *Connection) RunMigrations(ctx context.Context) error {
 			continue
 		}
 
-		if _, err := c.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migration statement %d failed: %w\nStatement: %s", i+1, err, stmt[:min(100, len(stmt))])
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration transaction: %w", err)
 	}
 
 	return nil
