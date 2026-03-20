@@ -68,7 +68,8 @@ export class HTTPClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const bodyText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${bodyText ? ` - ${bodyText}` : ''}`);
       }
 
       return await response.json() as T;
@@ -93,7 +94,8 @@ export class HTTPClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const bodyText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${bodyText ? ` - ${bodyText}` : ''}`);
       }
 
       return await response.json() as T;
