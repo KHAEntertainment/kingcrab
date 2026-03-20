@@ -23,10 +23,8 @@ type Handler struct {
 
 // NewHandler creates a new PAM handler
 func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUsers []User, allowedCommands []string, ttlMinutes int) *Handler {
-	// If no allowed users provided, try to load from store
-	if len(allowedUsers) == 0 {
-		allowedUsers = loadAllowedUsers(requestStore)
-	}
+	// Keep allowedUsers as-is (don't snapshot from DB)
+	// If nil/empty, authorization will query requestStore on each check
 
 	if ttlMinutes <= 0 {
 		ttlMinutes = 5 // default 5 minutes
@@ -42,17 +40,24 @@ func NewHandler(pam *PAM, requestStore RequestStore, botToken string, allowedUse
 	}
 }
 
-// loadAllowedUsers tries to load users from the store
-func loadAllowedUsers(store RequestStore) []User {
-	// Try DB store first
-	if dbStore, ok := store.(*DBRequestStore); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if users, err := dbStore.GetAuthorizedUsers(ctx); err == nil && len(users) > 0 {
-			return users
+// checkAuthorization verifies the user is authorized, querying requestStore if needed
+func (h *Handler) checkAuthorization(initData *InitData) error {
+	allowedUsers := h.allowedUsers
+
+	// If no static allowedUsers, query from requestStore (DB-backed)
+	if len(allowedUsers) == 0 {
+		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			users, err := dbStore.GetAuthorizedUsers(ctx)
+			if err != nil || len(users) == 0 {
+				return fmt.Errorf("no authorized users configured")
+			}
+			allowedUsers = users
 		}
 	}
-	return nil
+
+	return CheckAuthorization(initData, allowedUsers)
 }
 
 // Request types
@@ -171,7 +176,7 @@ func (h *Handler) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check authorization
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -225,7 +230,7 @@ func (h *Handler) handleApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check authorization
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -320,7 +325,7 @@ func (h *Handler) handleDeny(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check authorization
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -423,7 +428,7 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorize caller
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		// Log authorization failure for auditing
 		if dbStore, ok := h.requestStore.(*DBRequestStore); ok {
 			ctx := context.Background()
@@ -506,7 +511,7 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorize caller
-	if err := CheckAuthorization(initData, h.allowedUsers); err != nil {
+	if err := h.checkAuthorization(initData); err != nil {
 		h.respondError(w, http.StatusForbidden, "access denied")
 		return
 	}
@@ -561,6 +566,7 @@ func (h *Handler) isCommandAllowed(command string) bool {
 }
 
 // matchCommand checks if a command matches a pattern (* = wildcard)
+// Uses tokenized matching to prevent shell metacharacter injection
 func matchCommand(pattern, command string) bool {
 	if pattern == "*" {
 		return true
@@ -568,10 +574,83 @@ func matchCommand(pattern, command string) bool {
 	if pattern == command {
 		return true
 	}
-	// Simple wildcard support: "systemctl restart *"
-	if len(pattern) > 1 && pattern[len(pattern)-1] == '*' {
-		prefix := pattern[:len(pattern)-1]
-		return len(command) >= len(prefix) && command[:len(prefix)] == prefix
+
+	// Tokenize pattern and command by whitespace
+	patternTokens := tokenizeCommand(pattern)
+	commandTokens := tokenizeCommand(command)
+
+	if len(patternTokens) == 0 || len(commandTokens) == 0 {
+		return false
+	}
+
+	// Check if last pattern token is a wildcard
+	hasWildcard := false
+	matchTokens := patternTokens
+	if patternTokens[len(patternTokens)-1] == "*" {
+		hasWildcard = true
+		matchTokens = patternTokens[:len(patternTokens)-1]
+	}
+
+	// Command must have at least as many tokens as non-wildcard pattern tokens
+	if len(commandTokens) < len(matchTokens) {
+		return false
+	}
+
+	// If no wildcard, command must match pattern exactly in token count
+	if !hasWildcard && len(commandTokens) != len(matchTokens) {
+		return false
+	}
+
+	// Match all non-wildcard pattern tokens
+	for i, patternToken := range matchTokens {
+		if commandTokens[i] != patternToken {
+			return false
+		}
+	}
+
+	// Reject commands containing shell metacharacters or operators
+	for _, token := range commandTokens {
+		if containsShellMetacharacters(token) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// tokenizeCommand splits a command into whitespace-separated tokens
+func tokenizeCommand(s string) []string {
+	var tokens []string
+	var current []rune
+
+	for _, ch := range s {
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			if len(current) > 0 {
+				tokens = append(tokens, string(current))
+				current = nil
+			}
+		} else {
+			current = append(current, ch)
+		}
+	}
+
+	if len(current) > 0 {
+		tokens = append(tokens, string(current))
+	}
+
+	return tokens
+}
+
+// containsShellMetacharacters checks if a token contains dangerous shell characters
+func containsShellMetacharacters(token string) bool {
+	// Reject tokens containing shell operators and metacharacters
+	dangerousChars := ";|&<>`$(){}[]!*?~"
+	for _, ch := range token {
+		for _, danger := range dangerousChars {
+			if ch == danger {
+				return true
+			}
+		}
 	}
 	return false
 }
