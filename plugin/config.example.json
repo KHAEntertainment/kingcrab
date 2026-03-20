@@ -1,0 +1,108 @@
+{
+  "_comment": "OpenClaw Plugin Configuration for KingCrab",
+  "_comment_more": "This should be merged into your ~/.openclaw/openclaw.json file",
+
+  "plugins": {
+    "entries": {
+      "@khentertainment/kingcrab-plugin": {
+        "_enabled_comment": "Enable or disable the KingCrab plugin",
+        "enabled": true,
+
+        "_config_comment": "Plugin-specific configuration",
+        "config": {
+          "_daemonUrl_comment": "URL of the KingCrab daemon HTTP API",
+          "_use_unix_comment": "For production, use Unix socket: http+unix://%2Fvar%2Frun%2Fkingcrab.sock",
+          "daemonUrl": "http://localhost:8080",
+
+          "_token_comment": "Shared secret for daemon authentication (if enabled)",
+          "daemonToken": "kc_plugin_token_change_me_in_production",
+
+          "_timeout_comment": "Request timeout in milliseconds",
+          "timeout": 30000,
+
+          "_retry_comment": "Number of retries on connection failure",
+          "maxRetries": 3,
+
+          "_commands_comment": "Default allowed commands for this plugin instance",
+          "_note": "Can be overridden by daemon config",
+          "allowedCommands": [
+            "apt install *",
+            "apt update",
+            "systemctl restart *",
+            "systemctl start *",
+            "systemctl stop *",
+            "systemctl status *"
+          ],
+
+          "_reason_comment": "Require reason for requests from this plugin",
+          "requireReason": true,
+
+          "_notification_comment": "Notification preferences",
+          "notifications": {
+            "_enabled_comment": "Send Telegram notifications for new requests",
+            "enabled": true,
+            "_userId_comment": "Default Telegram user ID to notify (overrides per-request)",
+            "defaultUserId": null
+          },
+
+          "_webhook_comment": "Webhook URL for daemon to notify plugin of status changes",
+          "webhookUrl": "http://localhost:3000/kingcrab/webhook",
+          "_webhookSecret_comment": "Shared secret for webhook signature validation",
+          "webhookSecret": "webhook_secret_change_me"
+        },
+
+        "_env_comment": "Environment variables for the plugin",
+        "env": {
+          "_comment": "Override daemon URL via environment if needed",
+          "KINGCRAB_DAEMON_URL": "http://localhost:8080",
+          "_comment2": "Override daemon token via environment if needed",
+          "KINGCRAB_DAEMON_TOKEN": "kc_plugin_token_change_me_in_production"
+        },
+
+        "_skills_comment": "Skill-specific configuration",
+        "skills": {
+          "entries": {
+            "kingcrab": {
+              "_enabled_comment": "Enable the kingcrab skill",
+              "enabled": true,
+
+              "_config_comment": "Skill-specific configuration overrides",
+              "config": {
+                "_defaultReason_comment": "Default reason template if not provided",
+                "defaultReasonTemplate": "Automated request from {{.Agent}}",
+
+                "_maxReasonLength": "Maximum reason length",
+                "maxReasonLength": 500,
+
+                "_showResults_comment": "Show command execution results in chat",
+                "showResults": true,
+
+                "_truncateOutput_comment": "Truncate output to this many characters",
+                "maxOutputLength": 2000
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "_channels_comment": "Channel-specific configuration",
+  "channels": {
+    "telegram": {
+      "_comment": "KingCrab can send inline buttons for approval",
+      "capabilities": {
+        "_inlineButtons_comment": "Enable inline buttons for KingCrab requests",
+        "inlineButtons": "dm"
+      }
+    }
+  },
+
+  "_logging_comment": "Logging configuration for KingCrab plugin",
+  "logging": {
+    "_level_comment": "Log level: trace, debug, info, warn, error",
+    "level": "info",
+    "_file_comment": "Optional log file path",
+    "file": ""
+  }
+}

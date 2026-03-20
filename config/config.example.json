@@ -1,0 +1,149 @@
+{
+  "_comment": "KingCrab Daemon Configuration Example",
+  "_comment_more": "Copy this file to /etc/kingcrab/config.json and customize for your environment",
+
+  "version": "1.0.0",
+
+  "_listen_comment": "Server listening configuration",
+  "listen": {
+    "_type_comment": "Type of listener: 'unix' (socket) or 'tcp' (HTTP port)",
+    "type": "unix",
+    "_path_comment": "Path for Unix socket (used when type='unix')",
+    "path": "/var/run/kingcrab.sock",
+    "_port_comment": "Port for TCP listener (used when type='tcp')",
+    "port": 8080
+  },
+
+  "_allowedCommands_comment": "Command allowlist - only these patterns can be executed",
+  "_wildcard_note": "Use * as wildcard (matches via regex pattern)",
+  "allowedCommands": [
+    "apt install *",
+    "apt update",
+    "apt upgrade",
+    "systemctl restart *",
+    "systemctl start *",
+    "systemctl stop *",
+    "systemctl status *",
+    "systemctl enable *",
+    "systemctl disable *",
+    "docker restart *",
+    "docker start *",
+    "docker stop *"
+  ],
+
+  "_requireReason_comment": "Require agents to provide a reason for each request",
+  "requireReason": true,
+
+  "_autoApprove_comment": "Auto-approve timeout in seconds (0 = disabled, >0 = auto-approve after N seconds)",
+  "autoApproveTimeout": 0,
+
+  "_directories_comment": "File system locations",
+  "logDir": "/var/log/kingcrab",
+  "dataDir": "/var/lib/kingcrab",
+
+  "_logging_comment": "Logging configuration",
+  "logLevel": "info",
+
+  "_auth_comment": "Authentication for plugin-to-daemon communication",
+  "auth": {
+    "_enabled_comment": "Enable authentication (recommended for production)",
+    "enabled": false,
+    "_pluginTokens_comment": "List of valid bearer tokens for plugins",
+    "pluginTokens": [
+      "kc_plugin_token_change_me_in_production"
+    ]
+  },
+
+  "_telegram_comment": "Telegram bot configuration for approval workflow",
+  "telegram": {
+    "_token_comment": "Bot token from @BotFather",
+    "_get_token": "Message @BotFather on Telegram with /newbot",
+    "botToken": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
+
+    "_users_comment": "Telegram user IDs allowed to approve requests",
+    "_get_id": "Message @userinfobot on Telegram to get your ID",
+    "allowedUsers": [
+      123456789,
+      987654321
+    ],
+
+    "_enrollment_comment": "Allow users to self-enroll via pairing command",
+    "allowEnrollment": true,
+
+    "_webhook_comment": "Webhook configuration (leave empty for polling)",
+    "webhookUrl": "",
+
+    "_message_comment": "Custom message template (optional)",
+    "messageTemplate": "🔐 KingCrab PAM Request\n\nCommand: {{.Command}}\nReason: {{.Reason}}\nRequested by: {{.RequestedBy}}\n\n{{.Buttons}}"
+  },
+
+  "_audit_comment": "Audit logging configuration",
+  "audit": {
+    "_enabled_comment": "Enable detailed audit logging",
+    "enabled": true,
+    "_file_comment": "Audit log file path",
+    "file": "/var/log/kingcrab/audit.jsonl",
+    "_rotate_comment": "Rotate log files when they exceed this size (MB)",
+    "maxSizeMB": 100,
+    "_keep_comment": "Number of rotated files to keep",
+    "maxFiles": 10
+  },
+
+  "_rateLimit_comment": "Rate limiting configuration",
+  "rateLimit": {
+    "_enabled_comment": "Enable rate limiting",
+    "enabled": true,
+    "_global_comment": "Global requests per minute",
+    "globalPerMinute": 100,
+    "_perAgent_comment": "Requests per agent per minute",
+    "perAgentPerMinute": 10,
+    "_perUser_comment": "Approvals per user per hour",
+    "perUserPerHour": 30
+  },
+
+  "_webhook_comment": "Webhook notifications for status changes",
+  "webhook": {
+    "_enabled_comment": "Enable webhook notifications",
+    "enabled": false,
+    "_url_comment": "Webhook URL to notify",
+    "url": "http://localhost:3000/kingcrab/webhook",
+    "_secret_comment": "Shared secret for webhook signature validation",
+    "secret": "webhook_secret_change_me",
+    "_events_comment": "Events to notify on",
+    "events": [
+      "request.created",
+      "request.approved",
+      "request.denied",
+      "request.completed",
+      "request.failed"
+    ]
+  },
+
+  "_retention_comment": "Request retention policy",
+  "retention": {
+    "_maxAge_comment": "Delete completed requests after this many hours (0 = keep forever)",
+    "maxAgeHours": 720,
+    "_maxCompleted_comment": "Maximum number of completed requests to keep",
+    "maxCompleted": 1000
+  },
+
+  "_security_comment": "Security hardening options",
+  "security": {
+    "_enforceComment": "Always require a reason, even if disabled globally",
+    "enforceReason": false,
+    "_maxCommandLength": "Maximum command length in characters",
+    "maxCommandLength": 1000,
+    "_validateShell": "Check for dangerous shell metacharacters",
+    "validateShell": true
+  },
+
+  "_pam_comment": "PAM integration (experimental)",
+  "pam": {
+    "_enabled_comment": "Enable PAM module integration",
+    "enabled": false,
+    "_service_comment": "PAM service name",
+    "service": "kingcrab",
+    "_socket_comment": "Communication socket for PAM",
+    "socketPath": "/var/run/kingcrab-pam.sock"
+  }
+}

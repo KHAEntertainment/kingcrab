@@ -26,6 +26,9 @@ type Config struct {
 
 	// PAM (Privileged Access Management) config
 	PAM               *pam.PAMConfig  `json:"pam"`
+
+	// OpenClaw integration
+	OpenClaw          *OpenClawConfig `json:"openclaw"`
 }
 
 type ListenConfig struct {
@@ -39,6 +42,12 @@ type TelegramConfig struct {
 	BotToken      string  `json:"botToken"`
 	AllowedUsers  []int64 `json:"allowedUsers"`
 	WebhookURL    string  `json:"webhookUrl"`
+}
+
+// OpenClawConfig for OpenClaw integration
+type OpenClawConfig struct {
+	WebhookURL    string  `json:"webhookUrl"`    // Webhook URL for notifications
+	Enabled       bool    `json:"enabled"`       // Enable OpenClaw integration
 }
 
 // DefaultConfig returns sensible defaults
@@ -68,6 +77,10 @@ func DefaultConfig() *Config {
 			AllowedUsers: []int64{}, // Empty = no restrictions (but require enrollment)
 		},
 		PAM: pam.DefaultPAMConfig(),
+		OpenClaw: &OpenClawConfig{
+			WebhookURL: os.Getenv("KINGCRAB_OPENCLAW_WEBHOOK"),
+			Enabled:    os.Getenv("KINGCRAB_OPENCLAW_WEBHOOK") != "",
+		},
 	}
 }
 

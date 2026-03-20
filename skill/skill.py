@@ -32,11 +32,11 @@ class KingCrabSkill:
     pending_polls = {}  # poll_id -> request_id
     
     def __init__(self, daemon_url: str = None):
-        self.daemon_url = daemon_url or self.DAEMON_URL
-    
+        self.daemon_url = daemon_url or os.getenv("KINGCRAB_DAEMON_URL", self.DAEMON_URL)
+
     def _api_request(self, method: str, endpoint: str, data: dict = None) -> dict:
-        """Make API request to KingCrab daemon."""
-        url = f"{self.daemon_url}{endpoint}"
+        """Make API request to KingCrab daemon (v1 API)."""
+        url = f"{self.daemon_url}/api/v1{endpoint}"
         headers = {"Content-Type": "application/json"}
         
         req_data = json.dumps(data).encode() if data else None
@@ -69,13 +69,16 @@ class KingCrabSkill:
         # Create request on daemon
         result = self._api_request("POST", "/request", {
             "command": command,
-            "reason": reason
+            "reason": reason,
+            "requester": "openclaw-skill"
         })
         
-        if "id" not in result:
+        if not result.get("success"):
             return f"❌ Failed to create request: {result.get('error', 'Unknown error')}"
-        
-        short_id = result["id"][:8]
+
+        request_data = result.get("request", {})
+        request_id = request_data.get("id", "")
+        short_id = request_id[:8]
         
         # Return message indicating poll will be sent
         # The poll is sent by the skill system when response is displayed
