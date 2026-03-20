@@ -187,10 +187,17 @@ BEGIN
 
     -- Delete old completed requests based on terminal timestamp (approved_at)
     -- For terminal statuses, approved_at is used as the timestamp when status became terminal
+    -- For denied/failed with NULL approved_at, use created_at as fallback
     DELETE FROM elevation_requests
-    WHERE status IN ('approved', 'denied', 'expired', 'failed')
-    AND approved_at IS NOT NULL
-    AND approved_at < NOW() - (retention_days || ' days')::INTERVAL;
+    WHERE (
+        (status IN ('approved', 'denied', 'expired', 'failed')
+         AND approved_at IS NOT NULL
+         AND approved_at < NOW() - (retention_days || ' days')::INTERVAL)
+        OR
+        (status IN ('denied', 'failed')
+         AND approved_at IS NULL
+         AND created_at < NOW() - (retention_days || ' days')::INTERVAL)
+    );
 
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;

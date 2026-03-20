@@ -116,11 +116,12 @@ func (s *DBRequestStore) UpdateStateIf(ctx context.Context, id string, expectedS
 		}
 		result, err = s.db.ExecContext(ctx, query, id, newState, approvedByPtr, expectedState)
 	} else {
-		// For non-approved states, clear approval metadata
+		// For non-approved terminal states (denied/failed), set approved_at to NOW() for cleanup eligibility
+		// approved_by remains NULL as these states are not approvals
 		// Also reject expired requests in the same transaction
 		query = `
 			UPDATE elevation_requests
-			SET status = $2, approved_by = NULL, approved_at = NULL
+			SET status = $2, approved_by = NULL, approved_at = NOW()
 			WHERE id = $1 AND status = $3 AND expires_at > NOW()
 		`
 		result, err = s.db.ExecContext(ctx, query, id, newState, expectedState)
@@ -206,7 +207,7 @@ func (s *DBRequestStore) LogAudit(ctx context.Context, action string, requestID 
 
 // GetAuthorizedUsers returns all authorized users
 func (s *DBRequestStore) GetAuthorizedUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, display_name FROM authorized_users WHERE is_active = true")
+	rows, err := s.db.QueryContext(ctx, "SELECT telegram_id, display_name FROM authorized_users WHERE is_active = true AND telegram_id IS NOT NULL AND display_name IS NOT NULL")
 	if err != nil {
 		return nil, err
 	}
