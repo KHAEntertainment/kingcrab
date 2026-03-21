@@ -60,6 +60,22 @@ func (h *Handler) checkAuthorization(initData *InitData) error {
 	return CheckAuthorization(initData, allowedUsers)
 }
 
+// loadAllowedUsers retrieves the list of authorized users from the store when the
+// store supports it (i.e. is a *DBRequestStore). Returns nil for all other store
+// implementations.
+func loadAllowedUsers(store RequestStore) []User {
+	if dbStore, ok := store.(*DBRequestStore); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		users, err := dbStore.GetAuthorizedUsers(ctx)
+		if err != nil {
+			return nil
+		}
+		return users
+	}
+	return nil
+}
+
 // Request types
 type EnrollRequest struct {
 	InitData     string `json:"initData"`
