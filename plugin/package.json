@@ -1,9 +1,12 @@
 {
   "name": "@khentertainment/kingcrab-plugin",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "OpenClaw plugin for KingCrab PAM - chat-based sudo approval workflows",
-  "main": "kingcrab-plugin.ts",
+  "main": "index.ts",
   "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
@@ -18,6 +21,7 @@
   "author": "KHAEntertainment",
   "license": "MIT",
   "dependencies": {
+    "@sinclair/typebox": "^0.32.0",
     "zod": "^3.22.0"
   },
   "devDependencies": {

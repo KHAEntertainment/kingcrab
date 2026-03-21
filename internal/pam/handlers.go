@@ -60,6 +60,22 @@ func (h *Handler) checkAuthorization(initData *InitData) error {
 	return CheckAuthorization(initData, allowedUsers)
 }
 
+// loadAllowedUsers retrieves the list of authorized users from the store when the
+// store supports it (i.e. is a *DBRequestStore). Returns nil for all other store
+// implementations.
+func loadAllowedUsers(store RequestStore) []User {
+	if dbStore, ok := store.(*DBRequestStore); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		users, err := dbStore.GetAuthorizedUsers(ctx)
+		if err != nil {
+			return nil
+		}
+		return users
+	}
+	return nil
+}
+
 // Request types
 type EnrollRequest struct {
 	InitData     string `json:"initData"`
@@ -117,10 +133,7 @@ type CreateRequestResponse struct {
 
 // ServeHTTP implements http.Handler
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers for Mini App
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Init-Data")
+	// CORS headers are set by corsMiddleware in server_v2.go
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)

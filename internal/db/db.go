@@ -68,11 +68,27 @@ func NewConnection(cfg Config) (*Connection, error) {
 
 // NewConnectionFromEnv creates connection from environment variables
 func NewConnectionFromEnv() (*Connection, error) {
+	password := os.Getenv("KINGCRAB_DB_PASSWORD")
+
+	// If password is not set via env var, try reading from /etc/kingcrab/db.password
+	if password == "" {
+		data, err := os.ReadFile("/etc/kingcrab/db.password")
+		if err != nil {
+			// Only ignore "file not found" errors; surface real read failures
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("read password file: %w", err)
+			}
+			// File doesn't exist, continue without password (will fail later)
+		} else {
+			password = strings.TrimSpace(string(data))
+		}
+	}
+
 	cfg := Config{
 		Host:     getEnv("KINGCRAB_DB_HOST", "localhost"),
 		Port:     getEnvInt("KINGCRAB_DB_PORT", 5432),
 		User:     getEnv("KINGCRAB_DB_USER", "kingcrab"),
-		Password: os.Getenv("KINGCRAB_DB_PASSWORD"),
+		Password: password,
 		DBName:   getEnv("KINGCRAB_DB_NAME", "kingcrab"),
 		SSLMode:  getEnv("KINGCRAB_DB_SSLMODE", "prefer"), // Use "require" in production
 	}

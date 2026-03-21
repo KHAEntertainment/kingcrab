@@ -3,16 +3,17 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/KHAEntertainment/kingcrab/internal/config"
 	"github.com/KHAEntertainment/kingcrab/internal/daemon"
 	"github.com/KHAEntertainment/kingcrab/internal/logger"
 )
 
-const version = "0.1.0"
+const version = "1.0.0"
 
+// main is the program entry point that logs startup (including the build version), loads configuration,
+// constructs the server, registers signal handling, and starts the server.
+ // On failure to load configuration, create the server, or start the server, it logs the error and exits with status code 1.
 func main() {
 	logger.Info("KingCrab starting", map[string]interface{}{
 		"version": version,
@@ -27,17 +28,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create server
-	server := daemon.NewServer(cfg)
+	// Create server (v2 with database support)
+	server, err := daemon.NewServerV2(cfg)
+	if err != nil {
+		logger.Error("Failed to create server", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
 
-	// Handle shutdown gracefully
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		logger.Info("Shutting down KingCrab", nil)
-		server.Stop()
-	}()
+	// Handle signals
+	server.HandleSignals()
 
 	// Start server
 	if err := server.Start(); err != nil {

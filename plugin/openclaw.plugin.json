@@ -1,0 +1,169 @@
+{
+  "id": "kingcrab",
+  "name": "@khentertainment/kingcrab-plugin",
+  "version": "1.0.0",
+  "description": "KingCrab PAM - Privileged Access Management with chat-based sudo approval workflows",
+  "author": "KHAEntertainment",
+  "license": "MIT",
+  "type": "plugin",
+
+  "_comment": "OpenClaw Plugin Manifest",
+  "_see_docs": "https://github.com/openclaw/openclaw/blob/main/docs/plugins/manifest.md",
+
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "KingCrab Plugin Configuration",
+    "description": "Configuration for the KingCrab PAM plugin",
+    "type": "object",
+    "properties": {
+      "daemonUrl": {
+        "type": "string",
+        "format": "uri",
+        "default": "http://localhost:8080",
+        "description": "URL of the KingCrab daemon HTTP API. Use http+unix://%2Fvar%2Frun%2Fkingcrab.sock for Unix socket."
+      },
+      "daemonToken": {
+        "type": "string",
+        "default": "",
+        "description": "Shared secret token for daemon authentication (if enabled in daemon config)"
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 300000,
+        "default": 30000,
+        "description": "HTTP request timeout in milliseconds"
+      },
+      "maxRetries": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10,
+        "default": 3,
+        "description": "Number of retries on connection failure"
+      },
+      "allowedCommands": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "apt install *",
+          "apt update",
+          "systemctl restart *",
+          "systemctl start *",
+          "systemctl stop *",
+          "systemctl status *"
+        ],
+        "description": "Allowed command patterns. Can be overridden by daemon config."
+      },
+      "requireReason": {
+        "type": "boolean",
+        "default": true,
+        "description": "Require a reason for all requests"
+      },
+      "notifications": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Send Telegram notifications for new requests"
+          },
+          "defaultUserId": {
+            "type": ["integer", "null"],
+            "default": null,
+            "description": "Default Telegram user ID to notify (can be overridden per-request)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "webhookUrl": {
+        "type": "string",
+        "format": "uri",
+        "default": "",
+        "description": "Webhook URL for daemon to notify plugin of status changes"
+      },
+      "webhookSecret": {
+        "type": "string",
+        "default": "",
+        "description": "Shared secret for webhook signature validation"
+      }
+    },
+    "required": ["daemonUrl"],
+    "additionalProperties": false
+  },
+
+  "skills": {
+    "entries": {
+      "kingcrab": {
+        "name": "kingcrab",
+        "description": "Privileged Access Management - Request approval for elevated commands",
+        "module": "./skill.ts",
+        "configSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "title": "KingCrab Skill Configuration",
+          "type": "object",
+          "properties": {
+            "defaultReasonTemplate": {
+              "type": "string",
+              "default": "Automated request from {{.Agent}}",
+              "description": "Default reason template if not provided"
+            },
+            "maxReasonLength": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 2000,
+              "default": 500,
+              "description": "Maximum reason length"
+            },
+            "showResults": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show command execution results in chat"
+            },
+            "maxOutputLength": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 10000,
+              "default": 2000,
+              "description": "Truncate output to this many characters"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+
+  "httpRoutes": [
+    {
+      "path": "/kingcrab/webhook",
+      "method": "POST",
+      "auth": "plugin",
+      "description": "Webhook endpoint for daemon to notify plugin of status changes"
+    },
+    {
+      "path": "/kingcrab/ui",
+      "method": "GET",
+      "auth": "gateway",
+      "match": "prefix",
+      "description": "Web UI for approval management"
+    }
+  ],
+
+  "requirements": {
+    "openclaw": ">=0.10.0"
+  },
+
+  "tags": ["pam", "security", "sudo", "approval", "telegram", "admin"],
+
+  "homepage": "https://github.com/KHAEntertainment/kingcrab",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KHAEntertainment/kingcrab.git"
+  },
+
+  "bugs": {
+    "url": "https://github.com/KHAEntertainment/kingcrab/issues"
+  }
+}
