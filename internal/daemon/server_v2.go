@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -322,6 +323,43 @@ func (s *ServerV2) performCleanup(ctx context.Context) {
 	} else {
 		logger.Info("No expired requests found", nil)
 	}
+}
+
+// newConnectionFromConfig creates a db.Connection from a config.DatabaseConfig.
+// The password is resolved by reading the environment variable named by
+// cfg.PasswordEnv (e.g. "KINGCRAB_DB_PASSWORD"). When that variable is empty
+// or unset, the function falls back to the file /etc/kingcrab/db.password.
+func newConnectionFromConfig(cfg *config.DatabaseConfig) (*db.Connection, error) {
+	password := ""
+	if cfg.PasswordEnv != "" {
+		password = os.Getenv(cfg.PasswordEnv)
+	}
+	if password == "" {
+		if data, err := os.ReadFile("/etc/kingcrab/db.password"); err == nil {
+			password = strings.TrimSpace(string(data))
+		} else if !os.IsNotExist(err) {
+			logger.Warn("Could not read /etc/kingcrab/db.password", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+	if password == "" {
+		envName := cfg.PasswordEnv
+		if envName == "" {
+			envName = "KINGCRAB_DB_PASSWORD"
+		}
+		return nil, fmt.Errorf("database password not available: set %s or write to /etc/kingcrab/db.password", envName)
+	}
+
+	dbCfg := db.Config{
+		Host:     cfg.Host,
+		Port:     cfg.Port,
+		User:     cfg.User,
+		Password: password,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.SSLMode,
+	}
+	return db.NewConnection(dbCfg)
 }
 
 // Handle signals for graceful shutdown
