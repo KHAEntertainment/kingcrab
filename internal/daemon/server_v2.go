@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -13,17 +14,15 @@ import (
 
 	"github.com/KHAEntertainment/kingcrab/internal/api"
 	"github.com/KHAEntertainment/kingcrab/internal/config"
-	"github.com/KHAEntertainment/kingcrab/internal/db"
 	"github.com/KHAEntertainment/kingcrab/internal/executor"
 	"github.com/KHAEntertainment/kingcrab/internal/logger"
 	"github.com/KHAEntertainment/kingcrab/internal/notifications"
 	"github.com/KHAEntertainment/kingcrab/internal/pam"
 )
 
-// ServerV2 is the database-backed KingCrab server
+// ServerV2 is the SQLite-backed KingCrab server
 type ServerV2 struct {
 	config         *config.Config
-	db             *db.Connection
 	store          pam.RequestStore
 	pam            *pam.PAM
 	executor       *executor.Executor
@@ -38,29 +37,40 @@ type ServerV2 struct {
 // NewServerV2 creates and wires a ServerV2 with SQLite-backed storage, PAM, executor,
 // notifier, and API handler based on the provided configuration.
 //
-// The function uses a SQLite-backed in-memory request store for the daemon's request queue,
-// initializes PAM from cfg.PAM, creates a command executor using cfg.AllowedCommands,
-// and configures an OpenClaw notifier when enabled.
+// The function opens (or creates) a SQLite database at <cfg.DataDir>/requests.db to
+// back the persistent request queue, initializes PAM from cfg.PAM, creates a command
+// executor using cfg.AllowedCommands, and configures an OpenClaw notifier when enabled.
 // It returns an initialized *ServerV2 on success. Errors are returned if the function
-// fails to initialize PAM or the request store.
+// fails to initialize the SQLite store or PAM.
 func NewServerV2(cfg *config.Config) (*ServerV2, error) {
-	// Use in-memory request store (SQLite-compatible approach)
-	// The daemon uses a local SQLite/in-memory store for its request queue
-	store := pam.NewInMemoryRequestStore()
+	// Determine SQLite database path. Fall back to :memory: when DataDir is empty.
+	dbPath := ":memory:"
+	if cfg.DataDir != "" {
+		if err := os.MkdirAll(cfg.DataDir, 0750); err != nil {
+			return nil, fmt.Errorf("create data directory: %w", err)
+		}
+		dbPath = filepath.Join(cfg.DataDir, "requests.db")
+	}
 
-	// Note: External database connection is intentionally not created here
-	// The daemon's request queue uses SQLite/in-memory storage only
-	var database *db.Connection = nil
+	// Open the SQLite-backed request store (Phase 2: persistent queue).
+	store, err := pam.NewSQLiteRequestStore(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("initialize sqlite request store: %w", err)
+	}
 
 	// Create PAM module
 	p, err := pam.NewPAM(cfg.PAM)
 	if err != nil {
-		// No database to close since we use in-memory storage
+		_ = store.Close()
 		return nil, fmt.Errorf("initialize PAM: %w", err)
 	}
 
 	// Create executor
 	exec := executor.NewExecutor(cfg.AllowedCommands, 5*time.Minute)
+
+	logger.Info("SQLite request store opened", map[string]interface{}{
+		"path": dbPath,
+	})
 
 	// Create notifier
 	var notifier *notifications.OpenClawNotifier
@@ -79,7 +89,6 @@ func NewServerV2(cfg *config.Config) (*ServerV2, error) {
 
 	return &ServerV2{
 		config:         cfg,
-		db:             database,
 		store:          store,
 		pam:            p,
 		executor:       exec,
@@ -186,9 +195,10 @@ func (s *ServerV2) Stop(ctx context.Context) error {
 		}
 	}
 
-	if s.db != nil {
-		if err := s.db.Close(); err != nil {
-			logger.Error("Failed to close database", map[string]interface{}{
+	// Close the request store if it implements io.Closer (e.g. SQLiteRequestStore).
+	if closer, ok := s.store.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.Error("Failed to close request store", map[string]interface{}{
 				"error": err.Error(),
 			})
 		}
